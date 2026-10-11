@@ -1,0 +1,82 @@
+name: typescript
+
+# Bun/TypeScript checks of one package directory: install with the frozen
+# lockfile, then typecheck, lint, test and build, each only if the package
+# defines that script (override any step with a command, or "" to skip).
+#
+#   jobs:
+#     typescript:
+#       uses: traumventures/ci/.github/workflows/typescript.yml@v1
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        default: "."
+      bun-version:
+        description: Bun version; default reads .bun-version or packageManager, else latest
+        type: string
+        default: ""
+      install:
+        type: string
+        default: bun install --frozen-lockfile
+      typecheck:
+        type: string
+        default: bun run --if-present typecheck
+      lint:
+        type: string
+        default: bun run --if-present lint
+      test:
+        type: string
+        default: bun run --if-present test
+      build:
+        type: string
+        default: bun run --if-present build
+      submodules:
+        type: string
+        default: "false"
+      runner:
+        description: runs-on as JSON
+        type: string
+        default: '["self-hosted","traumventures"]'
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
+      - name: Bun version
+        id: bun
+        run: |
+          version="${{ inputs.bun-version }}"
+          if [ -z "$version" ] && [ -f .bun-version ]; then version=$(tr -d '[:space:]' < .bun-version); fi
+          if [ -z "$version" ] && [ -f package.json ]; then version=$(jq -r '.packageManager // "" | select(startswith("bun@")) | sub("^bun@"; "")' package.json); fi
+          echo "version=${version:-latest}" >> "$GITHUB_OUTPUT"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.bun.outputs.version }}
+      - name: Install
+        if: inputs.install != ''
+        run: ${{ inputs.install }}
+      - name: Typecheck
+        if: inputs.typecheck != ''
+        run: ${{ inputs.typecheck }}
+      - name: Lint
+        if: inputs.lint != ''
+        run: ${{ inputs.lint }}
+      - name: Test
+        if: inputs.test != ''
+        run: ${{ inputs.test }}
+      - name: Build
+        if: inputs.build != ''
+        run: ${{ inputs.build }}

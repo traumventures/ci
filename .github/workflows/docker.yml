@@ -1,0 +1,103 @@
+name: docker
+
+# Builds one image and, when push is true, publishes it to the Scaleway
+# registry as rg.fr-par.scw.cloud/traumventures/<repository>/<image>:
+#   - a tag v1.2.3 publishes :1.2.3 and :<commit sha>
+#   - any other pushed ref publishes :<commit sha>
+# Pull requests call it with push: false (build check only).
+#
+#   jobs:
+#     docker:
+#       uses: traumventures/ci/.github/workflows/docker.yml@v1
+#       with:
+#         image: my-service
+#         push: ${{ github.event_name != 'pull_request' }}
+#       secrets: inherit        # SCW_REGISTRY_PUSH_KEY of the repository
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: image name below traumventures/<repository>/
+        type: string
+        required: true
+      context:
+        type: string
+        default: "."
+      dockerfile:
+        description: path of the Dockerfile; default <context>/Dockerfile
+        type: string
+        default: ""
+      target:
+        type: string
+        default: ""
+      build-args:
+        type: string
+        default: ""
+      platforms:
+        description: the production hosts are x86_64
+        type: string
+        default: linux/amd64
+      push:
+        type: boolean
+        default: false
+      submodules:
+        type: string
+        default: "false"
+      runner:
+        type: string
+        default: '["self-hosted","traumventures"]'
+    secrets:
+      SCW_REGISTRY_PUSH_KEY:
+        required: false
+    outputs:
+      digest:
+        value: ${{ jobs.docker.outputs.digest }}
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: 90
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to the registry
+        if: inputs.push
+        uses: docker/login-action@v3
+        with:
+          registry: rg.fr-par.scw.cloud
+          username: nologin
+          password: ${{ secrets.SCW_REGISTRY_PUSH_KEY }}
+      - name: Image name
+        id: name
+        run: echo "image=rg.fr-par.scw.cloud/traumventures/${GITHUB_REPOSITORY#*/}/${{ inputs.image }}" >> "$GITHUB_OUTPUT"
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,format=long,prefix=
+      - name: Build${{ inputs.push && ' and push' || '' }}
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile != '' && inputs.dockerfile || format('{0}/Dockerfile', inputs.context) }}
+          target: ${{ inputs.target }}
+          build-args: ${{ inputs.build-args }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ inputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}

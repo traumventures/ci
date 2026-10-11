@@ -1,0 +1,51 @@
+name: go
+
+# Go checks of one module: gofmt, go vet, tests (with the race detector).
+#
+#   jobs:
+#     go:
+#       uses: traumventures/ci/.github/workflows/go.yml@v1
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        default: "."
+      test:
+        type: string
+        default: go test -race ./...
+      submodules:
+        type: string
+        default: "false"
+      runner:
+        type: string
+        default: '["self-hosted","traumventures"]'
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: ${{ inputs.submodules }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ inputs.working-directory }}/go.mod
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '^vendor/') || true)
+          if [ -n "$unformatted" ]; then echo "not gofmt-formatted:"; echo "$unformatted"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: Test
+        if: inputs.test != ''
+        run: ${{ inputs.test }}
