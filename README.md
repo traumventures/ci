@@ -12,12 +12,19 @@ tests, builds and publishes. All of them run on our own runners
 | `go.yml` | gofmt, `go vet`, `go test -race` |
 | `docker.yml` | builds an image; with `push: true` publishes `rg.fr-par.scw.cloud/traumventures/<repository>/<image>` as `:<sha>`, on a tag `v1.2.3` also `:1.2.3` |
 
-| `actions/postgres` (composite action) | a throwaway Postgres on the job's `127.0.0.1` (instead of `services:`, which on our containerized runners would not be reachable on localhost) |
+| `actions/postgres` (composite action) | a throwaway Postgres on `127.0.0.1`, preferred port or the next free one (`url`/`port` outputs); jobs share one network namespace |
 
 ```yaml
 - uses: traumventures/ci/actions/postgres@v1
   with: { user: process, password: process, database: process_test }
 ```
+
+**Runner environment.** Jobs run in containers that share the network
+namespace of the runners' rootless Docker daemon: ports a job publishes
+(`docker run -p`, Compose) answer on `127.0.0.1` as on hosted runners, and
+several jobs run side by side, so fixed ports can collide. Prefer free ports
+or the outputs above. `sudo` works; `gh`, `node`, `docker compose`, `jq`,
+`python3` and build tools are installed.
 
 Every input has a default; a step can be replaced by a command or skipped
 with `""`.

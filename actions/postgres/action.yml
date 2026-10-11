@@ -1,10 +1,10 @@
 name: postgres
 description: >
-  Starts a throwaway Postgres reachable at 127.0.0.1:<port> of this job. On our
-  runners a job runs inside the runner container, so `services:` with published
-  ports would land on the daemon's host, not on the job's localhost; this
-  container joins the runner container's network namespace instead. Removed
-  after the job (label gh-runner-job, see gh-runners job-completed.sh).
+  Starts a throwaway Postgres for this job on 127.0.0.1. Our runners share the
+  network namespace of their rootless Docker daemon, so several jobs can run
+  at once: the port is the requested one if free, else the next free one; use
+  the `url` / `port` outputs. Removed after the job (label gh-runner-job, see
+  gh-runners job-completed.sh).
 
 inputs:
   image:
@@ -16,12 +16,15 @@ inputs:
   database:
     default: postgres
   port:
+    description: preferred port
     default: "5432"
 
 outputs:
   url:
     description: postgres://user:password@127.0.0.1:port/database
     value: ${{ steps.start.outputs.url }}
+  port:
+    value: ${{ steps.start.outputs.port }}
 
 runs:
   using: composite
@@ -29,16 +32,21 @@ runs:
     - id: start
       shell: bash
       run: |
-        name="pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(hostname)"
+        name="pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}-${RUNNER_NAME}"
+        name=$(printf '%s' "$name" | tr -c 'a-zA-Z0-9_.-' '-')
         docker rm -f "$name" >/dev/null 2>&1 || true
-        docker run -d --name "$name" --label gh-runner-job=1 \
-          --network "container:$(hostname)" \
+        free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+        port='${{ inputs.port }}'
+        for _ in $(seq 1 50); do free "$port" && break; port=$((port + 1)); done
+        docker run -d --name "$name" --label gh-runner-job=1 --network host \
           -e POSTGRES_USER='${{ inputs.user }}' -e POSTGRES_PASSWORD='${{ inputs.password }}' -e POSTGRES_DB='${{ inputs.database }}' \
-          -e PGPORT='${{ inputs.port }}' \
-          '${{ inputs.image }}' >/dev/null
+          -e PGPORT="$port" \
+          '${{ inputs.image }}' -c listen_addresses=127.0.0.1 >/dev/null
         for _ in $(seq 1 60); do
-          if docker exec "$name" pg_isready -h 127.0.0.1 -p '${{ inputs.port }}' -U '${{ inputs.user }}' -d '${{ inputs.database }}' -q; then
-            echo "url=postgres://${{ inputs.user }}:${{ inputs.password }}@127.0.0.1:${{ inputs.port }}/${{ inputs.database }}" >> "$GITHUB_OUTPUT"
+          if docker exec "$name" pg_isready -h 127.0.0.1 -p "$port" -U '${{ inputs.user }}' -d '${{ inputs.database }}' -q; then
+            echo "port=$port" >> "$GITHUB_OUTPUT"
+            echo "url=postgres://${{ inputs.user }}:${{ inputs.password }}@127.0.0.1:$port/${{ inputs.database }}" >> "$GITHUB_OUTPUT"
+            echo "postgres on 127.0.0.1:$port"
             exit 0
           fi
           sleep 1
