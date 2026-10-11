@@ -12,6 +12,13 @@ tests, builds and publishes. All of them run on our own runners
 | `go.yml` | gofmt, `go vet`, `go test -race` |
 | `docker.yml` | builds an image; with `push: true` publishes `rg.fr-par.scw.cloud/traumventures/<repository>/<image>` as `:<sha>`, on a tag `v1.2.3` also `:1.2.3` |
 
+| `actions/postgres` (composite action) | a throwaway Postgres on the job's `127.0.0.1` (instead of `services:`, which on our containerized runners would not be reachable on localhost) |
+
+```yaml
+- uses: traumventures/ci/actions/postgres@v1
+  with: { user: process, password: process, database: process_test }
+```
+
 Every input has a default; a step can be replaced by a command or skipped
 with `""`.
 
