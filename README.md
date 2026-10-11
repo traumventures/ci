@@ -34,11 +34,13 @@ with `""`.
 ## Bun, not Node
 
 Every JavaScript/TypeScript project runs on Bun 1.4.3: `bun install`,
-`bun run`, `bunx`, `bun test`, `bun pm pack`. Type checks use `bun --check`
-(Bun's native checker: same errors as `tsc`, all cores; `bun --check -p
-<tsconfig>`), not `tsc --noEmit`. Write `bun --check`, not `bun check`: the
-latter runs a package.json script named `check` when one exists, also in
-parent directories. No `setup-node`, `npm` or `npx`. The only
+`bun run`, `bunx`, `bun test`, `bun pm pack`. Type checks use `bun check`
+(Bun's native checker: same errors as `tsc`, all cores; `bun check -p
+<tsconfig>`), not `tsc --noEmit`. **No package.json script may be called
+`check`**: Bun then runs that script for `bun check` (also from a parent
+directory) instead of the checker. Name such scripts `verify` or `check:all`.
+`bun --check` without arguments always runs the checker on `./tsconfig.json`.
+No `setup-node`, `npm` or `npx`. The only
 exceptions are jobs whose subject is Node itself (a package's Node
 compatibility matrix, a Node runtime target); they say so in a comment.
 
