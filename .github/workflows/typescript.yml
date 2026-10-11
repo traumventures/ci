@@ -79,7 +79,7 @@ jobs:
         run: |
           if [ "$COMMAND" = auto ]; then
             if jq -e '.scripts["typecheck"]' package.json >/dev/null 2>&1; then bun run typecheck
-            elif [ -f tsconfig.json ]; then bun check
+            elif [ -f tsconfig.json ]; then bun --check   # `bun check` would run a "check" script instead
             else echo "no typecheck script and no tsconfig.json, skipped"; fi
           else
             bash -ec "$COMMAND"
