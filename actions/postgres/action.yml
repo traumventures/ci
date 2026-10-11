@@ -3,7 +3,7 @@ description: >
   Starts a throwaway Postgres for this job on 127.0.0.1. Our runners share the
   network namespace of their rootless Docker daemon, so several jobs can run
   at once: the port is the requested one if free, else the next free one; use
-  the `url` / `port` outputs. Removed after the job (label gh-runner-job, see
+  the `url` / `port` outputs. Removed after the job (label gh-runner-job=<runner name>, see
   gh-runners job-completed.sh).
 
 inputs:
@@ -38,7 +38,7 @@ runs:
         free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
         port='${{ inputs.port }}'
         for _ in $(seq 1 50); do free "$port" && break; port=$((port + 1)); done
-        docker run -d --name "$name" --label gh-runner-job=1 --network host \
+        docker run -d --name "$name" --label "gh-runner-job=${RUNNER_NAME}" --network host \
           -e POSTGRES_USER='${{ inputs.user }}' -e POSTGRES_PASSWORD='${{ inputs.password }}' -e POSTGRES_DB='${{ inputs.database }}' \
           -e PGPORT="$port" \
           '${{ inputs.image }}' -c listen_addresses=127.0.0.1 >/dev/null
