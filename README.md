@@ -1,9 +1,14 @@
 # ci
 
 Reusable GitHub Actions workflows: the one way every traumventures repository
-tests, builds and publishes. All of them run on our own runners
-([gh-runners](https://github.com/traumventures/gh-runners),
-`runs-on: [self-hosted, traumventures]`).
+tests, builds and publishes. They run on **Blacksmith** (`blacksmith-4vcpu-ubuntu-2404`
+by default, a fresh VM per job; pass `runner: '["blacksmith-8vcpu-ubuntu-2404"]'`
+for heavy suites, 2/4/8/16/32 vCPU exist).
+
+Only jobs that hold production credentials or need the dev box stay on our own
+runners ([gh-runners](https://github.com/traumventures/gh-runners)): the
+`deploy-production` workflows (their own deploy runners, devbox BuildKit
+cache) and traumwohnung's preview workflows (`runs-on: [self-hosted, traumventures]`).
 
 | Workflow | Does |
 |---|---|
@@ -19,12 +24,9 @@ tests, builds and publishes. All of them run on our own runners
   with: { user: process, password: process, database: process_test }
 ```
 
-**Runner environment.** Jobs run in containers that share the network
-namespace of the runners' rootless Docker daemon: ports a job publishes
-(`docker run -p`, Compose) answer on `127.0.0.1` as on hosted runners, and
-several jobs run side by side, so fixed ports can collide. Prefer free ports
-or the outputs above. `sudo` works; `gh`, `node`, `docker compose`, `jq`,
-`python3` and build tools are installed.
+**Runner environment.** Blacksmith VMs behave like GitHub's hosted Ubuntu:
+Docker, `services:`, `sudo`, published ports on localhost; nothing is shared
+between jobs.
 
 Every input has a default; a step can be replaced by a command or skipped
 with `""`.

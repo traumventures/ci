@@ -46,7 +46,7 @@ on:
         default: "false"
       runner:
         type: string
-        default: '["self-hosted","traumventures"]'
+        default: '["blacksmith-4vcpu-ubuntu-2404"]'
     secrets:
       SCW_REGISTRY_PUSH_KEY:
         required: false
