@@ -2,7 +2,9 @@ name: typescript
 
 # Bun/TypeScript checks of one package directory: install with the frozen
 # lockfile, then typecheck, lint, test and build. Each step defaults to
-# "auto": run the package.json script of that name if it exists, else skip
+# "auto": run the package.json script of that name if it exists (typecheck
+# falls back to `bun check`, Bun's native tsc-compatible checker, when there
+# is a tsconfig.json), else skip
 # (`bun run --if-present test` would fall through to /usr/bin/test). Override
 # a step with a command, or "" to skip it.
 #
@@ -17,7 +19,7 @@ on:
         type: string
         default: "."
       bun-version:
-        description: Bun version; default reads .bun-version or packageManager, else latest
+        description: Bun version; the org standard is 1.4.3 (a repository's .bun-version or packageManager bun@ wins)
         type: string
         default: ""
       install:
@@ -63,7 +65,7 @@ jobs:
           version="${{ inputs.bun-version }}"
           if [ -z "$version" ] && [ -f .bun-version ]; then version=$(tr -d '[:space:]' < .bun-version); fi
           if [ -z "$version" ] && [ -f package.json ]; then version=$(jq -r '.packageManager // "" | select(startswith("bun@")) | sub("^bun@"; "")' package.json); fi
-          echo "version=${version:-latest}" >> "$GITHUB_OUTPUT"
+          echo "version=${version:-1.4.3}" >> "$GITHUB_OUTPUT"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ steps.bun.outputs.version }}
@@ -76,7 +78,9 @@ jobs:
           COMMAND: ${{ inputs.typecheck }}
         run: |
           if [ "$COMMAND" = auto ]; then
-            if jq -e '.scripts["typecheck"]' package.json >/dev/null 2>&1; then bun run typecheck; else echo "no typecheck script, skipped"; fi
+            if jq -e '.scripts["typecheck"]' package.json >/dev/null 2>&1; then bun run typecheck
+            elif [ -f tsconfig.json ]; then bun check
+            else echo "no typecheck script and no tsconfig.json, skipped"; fi
           else
             bash -ec "$COMMAND"
           fi

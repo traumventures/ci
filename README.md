@@ -7,7 +7,7 @@ tests, builds and publishes. All of them run on our own runners
 
 | Workflow | Does |
 |---|---|
-| `typescript.yml` | Bun: `install --frozen-lockfile`, then `typecheck`, `lint`, `test`, `build` when the package defines them |
+| `typescript.yml` | Bun 1.4.3: `install --frozen-lockfile`, then `typecheck` (script, else `bun check`), `lint`, `test`, `build` when the package defines them |
 | `rust.yml` | `cargo fmt --check`, Clippy `-D warnings`, `cargo test`, all `--locked`; toolchain from `rust-toolchain.toml` |
 | `go.yml` | gofmt, `go vet`, `go test -race` |
 | `docker.yml` | builds an image; with `push: true` publishes `rg.fr-par.scw.cloud/traumventures/<repository>/<image>` as `:<sha>`, on a tag `v1.2.3` also `:1.2.3` |
@@ -28,6 +28,15 @@ or the outputs above. `sudo` works; `gh`, `node`, `docker compose`, `jq`,
 
 Every input has a default; a step can be replaced by a command or skipped
 with `""`.
+
+## Bun, not Node
+
+Every JavaScript/TypeScript project runs on Bun 1.4.3: `bun install`,
+`bun run`, `bunx`, `bun test`, `bun pm pack`. Type checks use `bun check`
+(Bun's native checker: same errors as `tsc`, all cores; `bun check -p
+<tsconfig>`), not `tsc --noEmit`. No `setup-node`, `npm` or `npx`. The only
+exceptions are jobs whose subject is Node itself (a package's Node
+compatibility matrix, a Node runtime target); they say so in a comment.
 
 ## The standard layout of a repository
 
