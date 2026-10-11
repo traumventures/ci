@@ -1,8 +1,10 @@
 name: typescript
 
 # Bun/TypeScript checks of one package directory: install with the frozen
-# lockfile, then typecheck, lint, test and build, each only if the package
-# defines that script (override any step with a command, or "" to skip).
+# lockfile, then typecheck, lint, test and build. Each step defaults to
+# "auto": run the package.json script of that name if it exists, else skip
+# (`bun run --if-present test` would fall through to /usr/bin/test). Override
+# a step with a command, or "" to skip it.
 #
 #   jobs:
 #     typescript:
@@ -23,16 +25,16 @@ on:
         default: bun install --frozen-lockfile
       typecheck:
         type: string
-        default: bun run --if-present typecheck
+        default: auto
       lint:
         type: string
-        default: bun run --if-present lint
+        default: auto
       test:
         type: string
-        default: bun run --if-present test
+        default: auto
       build:
         type: string
-        default: bun run --if-present build
+        default: auto
       submodules:
         type: string
         default: "false"
@@ -70,13 +72,41 @@ jobs:
         run: ${{ inputs.install }}
       - name: Typecheck
         if: inputs.typecheck != ''
-        run: ${{ inputs.typecheck }}
+        env:
+          COMMAND: ${{ inputs.typecheck }}
+        run: |
+          if [ "$COMMAND" = auto ]; then
+            if jq -e '.scripts["typecheck"]' package.json >/dev/null 2>&1; then bun run typecheck; else echo "no typecheck script, skipped"; fi
+          else
+            bash -ec "$COMMAND"
+          fi
       - name: Lint
         if: inputs.lint != ''
-        run: ${{ inputs.lint }}
+        env:
+          COMMAND: ${{ inputs.lint }}
+        run: |
+          if [ "$COMMAND" = auto ]; then
+            if jq -e '.scripts["lint"]' package.json >/dev/null 2>&1; then bun run lint; else echo "no lint script, skipped"; fi
+          else
+            bash -ec "$COMMAND"
+          fi
       - name: Test
         if: inputs.test != ''
-        run: ${{ inputs.test }}
+        env:
+          COMMAND: ${{ inputs.test }}
+        run: |
+          if [ "$COMMAND" = auto ]; then
+            if jq -e '.scripts["test"]' package.json >/dev/null 2>&1; then bun run test; else echo "no test script, skipped"; fi
+          else
+            bash -ec "$COMMAND"
+          fi
       - name: Build
         if: inputs.build != ''
-        run: ${{ inputs.build }}
+        env:
+          COMMAND: ${{ inputs.build }}
+        run: |
+          if [ "$COMMAND" = auto ]; then
+            if jq -e '.scripts["build"]' package.json >/dev/null 2>&1; then bun run build; else echo "no build script, skipped"; fi
+          else
+            bash -ec "$COMMAND"
+          fi
