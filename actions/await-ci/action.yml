@@ -1,0 +1,31 @@
+name: await-ci
+description: >
+  Fails unless the commit is on the default branch and the repository's CI
+  workflow passed for exactly that commit; waits for a run still in progress.
+  The step a deploy or release runs before it builds or publishes anything.
+  Needs `actions: read` and `contents: read`.
+
+inputs:
+  sha:
+    default: ${{ github.sha }}
+  workflow:
+    description: workflow file of the CI whose result counts
+    default: ci.yml
+  branch:
+    default: main
+  wait-minutes:
+    default: "30"
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.4.3
+        no-cache: true
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: >
+        bun "$GITHUB_ACTION_PATH/await-ci.ts" '${{ inputs.sha }}'
+        --workflow '${{ inputs.workflow }}' --branch '${{ inputs.branch }}' --wait '${{ inputs.wait-minutes }}'

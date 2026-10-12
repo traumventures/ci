@@ -2,6 +2,10 @@ name: go
 
 # Go checks of one module: gofmt, go vet, tests (with the race detector).
 #
+# Skips draft pull requests, and every step after checkout when this job
+# already passed with the same tree and inputs (actions/green). On Blacksmith
+# the module and build caches live on a sticky disk that only main commits.
+#
 #   jobs:
 #     go:
 #       uses: traumventures/ci/.github/workflows/go.yml@v1
@@ -21,31 +25,73 @@ on:
       runner:
         type: string
         default: '["blacksmith-4vcpu-ubuntu-2404"]'
+      skip-unchanged:
+        description: skip when this job already passed with the same tree and inputs
+        type: boolean
+        default: true
+      inputs-paths:
+        description: pathspecs that decide the result (space separated); default the whole repository
+        type: string
+        default: "."
 
-permissions:
-  contents: read
+# No `permissions:` of its own: a called workflow can only narrow what its
+# caller grants. The caller's `contents: read` + `actions: read` (the green
+# lookup lists artifacts) apply; without `actions: read` nothing is skipped.
 
 jobs:
   go:
+    if: github.event.pull_request.draft != true
     runs-on: ${{ fromJSON(inputs.runner) }}
     timeout-minutes: 30
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
         with:
           submodules: ${{ inputs.submodules }}
+      - id: green
+        uses: traumventures/ci/actions/green@v1
+        with:
+          mode: lookup
+          config: ${{ toJSON(inputs) }}
+          paths: ${{ inputs.inputs-paths }}
+          enabled: ${{ inputs.skip-unchanged }}
       - uses: actions/setup-go@v5
+        if: steps.green.outputs.hit != 'true'
         with:
           go-version-file: ${{ inputs.working-directory }}/go.mod
           cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+          # The caches are the sticky disk below on Blacksmith.
+          cache: ${{ !contains(inputs.runner, 'blacksmith') }}
+      - name: Go caches (sticky disk, committed by main only)
+        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-go-${{ inputs.working-directory }}-v1
+          path: /home/runner/.ci-go
+          commit: ${{ github.event_name == 'pull_request' && 'false' || 'on-change' }}
+      - name: Use the sticky disk
+        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
+        run: |
+          sudo chown "$(id -u):$(id -g)" /home/runner/.ci-go
+          mkdir -p /home/runner/.ci-go/mod /home/runner/.ci-go/build
+          echo "GOMODCACHE=/home/runner/.ci-go/mod" >> "$GITHUB_ENV"
+          echo "GOCACHE=/home/runner/.ci-go/build" >> "$GITHUB_ENV"
       - name: gofmt
+        if: steps.green.outputs.hit != 'true'
         run: |
           unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '^vendor/') || true)
           if [ -n "$unformatted" ]; then echo "not gofmt-formatted:"; echo "$unformatted"; exit 1; fi
       - name: go vet
+        if: steps.green.outputs.hit != 'true'
         run: go vet ./...
       - name: Test
-        if: inputs.test != ''
+        if: steps.green.outputs.hit != 'true' && inputs.test != ''
         run: ${{ inputs.test }}
+      - if: steps.green.outputs.hit != 'true'
+        uses: traumventures/ci/actions/green@v1
+        with:
+          mode: save
+          key: ${{ steps.green.outputs.key }}
+          enabled: ${{ inputs.skip-unchanged }}
