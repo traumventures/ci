@@ -17,12 +17,36 @@ cache) and traumwohnung's preview workflows (`runs-on: [self-hosted, traumventur
 | `go.yml` | gofmt, `go vet`, `go test -race` |
 | `docker.yml` | builds an image; with `push: true` publishes `rg.fr-par.scw.cloud/traumventures/<repository>/<image>` as `:<sha>`, on a tag `v1.2.3` also `:1.2.3` |
 
+| `gate.yml` | the first job of a deploy or release: the commit is on `main` and its `ci` passed; waits for a run in progress |
+
 | `actions/postgres` (composite action) | a throwaway Postgres on `127.0.0.1`, preferred port or the next free one (`url`/`port` outputs); jobs share one network namespace |
 
 ```yaml
 - uses: traumventures/ci/actions/postgres@v1
   with: { user: process, password: process, database: process_test }
 ```
+
+| `actions/await-ci` | what `gate.yml` runs, for a step inside an existing job |
+| `actions/green` | the "already passed" marker the workflows above use (lookup/save) |
+
+**Skipping what already passed.** `typescript`, `rust`, `go` and `docker`
+(build checks, not publishing) skip draft pull requests and, when the job
+already passed with the same tree and the same inputs, every step after the
+checkout (`actions/green`: a marker artifact named after a hash of
+`git ls-files -s`, the inputs and this repository's version). The common
+case is the merge commit on `main`: the pull request tested that exact tree,
+so `main`'s run finishes in seconds. `skip-unchanged: false` turns it off,
+`inputs-paths: "services/x shared"` narrows the tree to what decides the result.
+The caller grants `actions: read` (listing artifacts); without it nothing is
+skipped.
+
+**Caches.** On Blacksmith, state that only speeds things up lives on sticky
+disks: Bun's install cache, Rust's target directory and registry (with
+incremental builds), Go's module and build caches, Docker layers
+(Blacksmith's BuildKit builder). Only runs on `main` commit them; a pull
+request starts from `main`'s snapshot and its writes are discarded, so
+branches neither overwrite each other nor evict `main`'s state. Other
+runners fall back to the Actions cache, saved by `main` only.
 
 **Runner environment.** Blacksmith VMs behave like GitHub's hosted Ubuntu:
 Docker, `services:`, `sudo`, published ports on localhost; nothing is shared
@@ -53,16 +77,20 @@ name: ci
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read               # the "already passed" lookup
 
+# Pull requests: a new push cancels the older run. main: every commit keeps
+# its own run and result; gates ask for exactly that commit.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   typescript:                 # or rust / go, one job per language or package
@@ -86,9 +114,13 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  gate:                       # only a commit of main whose ci passed is published
+    uses: traumventures/ci/.github/workflows/gate.yml@v1
   docker:
+    needs: gate
     uses: traumventures/ci/.github/workflows/docker.yml@v1
     with:
       image: my-service
@@ -96,10 +128,14 @@ jobs:
     secrets: inherit
 ```
 
+Jobs a repository writes itself (not through these workflows) add
+`if: github.event.pull_request.draft != true`.
+
 **`.github/workflows/deploy-production.yml`**: only repositories with a
 production stack (traumwohnung, common-infra): a fast-forward of
 `deploy/production` to a commit of `main` deploys it (see
-`deployment/cd/README.md` there). These run on their own deploy runners, not
+`deployment/cd/README.md` there), after a `gate` job (`gate.yml`) confirmed
+that `ci` passed for that commit. These run on their own deploy runners, not
 on the shared pool.
 
 Registry credentials: one Scaleway IAM application per repository

@@ -1,0 +1,44 @@
+name: gate
+
+# The first job of a deploy or release: the commit is on the default branch
+# and its CI passed (actions/await-ci); waits for a CI run still in progress.
+# No secrets, no checkout.
+#
+#   jobs:
+#     gate:
+#       uses: traumventures/ci/.github/workflows/gate.yml@v1
+#     publish:
+#       needs: gate
+#       ...
+#
+# The caller grants `actions: read` and `contents: read` (workflow-level
+# `permissions:`); this workflow inherits them.
+
+on:
+  workflow_call:
+    inputs:
+      workflow:
+        description: workflow file of the CI whose result counts
+        type: string
+        default: ci.yml
+      branch:
+        type: string
+        default: main
+      wait-minutes:
+        type: string
+        default: "30"
+      runner:
+        type: string
+        default: '["blacksmith-2vcpu-ubuntu-2404"]'
+
+jobs:
+  gate:
+    name: on ${{ inputs.branch }}, ${{ inputs.workflow }} green
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: 40
+    steps:
+      - uses: traumventures/ci/actions/await-ci@v1
+        with:
+          workflow: ${{ inputs.workflow }}
+          branch: ${{ inputs.branch }}
+          wait-minutes: ${{ inputs.wait-minutes }}

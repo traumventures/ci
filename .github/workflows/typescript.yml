@@ -3,10 +3,15 @@ name: typescript
 # Bun/TypeScript checks of one package directory: install with the frozen
 # lockfile, then typecheck, lint, test and build. Each step defaults to
 # "auto": run the package.json script of that name if it exists (typecheck
-# falls back to `bun check`, Bun's native tsc-compatible checker, when there
+# falls back to `bun --check`, Bun's native tsc-compatible checker, when there
 # is a tsconfig.json), else skip
 # (`bun run --if-present test` would fall through to /usr/bin/test). Override
 # a step with a command, or "" to skip it.
+#
+# Skips draft pull requests, and every step after checkout when this job
+# already passed with the same tree and inputs (actions/green; the caller
+# grants `actions: read`). Bun's install cache lives on a Blacksmith sticky
+# disk that only main commits.
 #
 #   jobs:
 #     typescript:
@@ -44,36 +49,64 @@ on:
         description: runs-on as JSON
         type: string
         default: '["blacksmith-4vcpu-ubuntu-2404"]'
+      skip-unchanged:
+        description: skip when this job already passed with the same tree and inputs
+        type: boolean
+        default: true
+      inputs-paths:
+        description: pathspecs that decide the result (space separated); default the whole repository
+        type: string
+        default: "."
 
-permissions:
-  contents: read
+# No `permissions:` of its own: a called workflow can only narrow what its
+# caller grants. The caller's `contents: read` + `actions: read` (the green
+# lookup lists artifacts) apply; without `actions: read` nothing is skipped.
 
 jobs:
   typescript:
+    if: github.event.pull_request.draft != true
     runs-on: ${{ fromJSON(inputs.runner) }}
     timeout-minutes: 30
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
         with:
           submodules: ${{ inputs.submodules }}
+      - id: green
+        uses: traumventures/ci/actions/green@v1
+        with:
+          mode: lookup
+          config: ${{ toJSON(inputs) }}
+          paths: ${{ inputs.inputs-paths }}
+          enabled: ${{ inputs.skip-unchanged }}
       - name: Bun version
         id: bun
+        if: steps.green.outputs.hit != 'true'
         run: |
           version="${{ inputs.bun-version }}"
           if [ -z "$version" ] && [ -f .bun-version ]; then version=$(tr -d '[:space:]' < .bun-version); fi
           if [ -z "$version" ] && [ -f package.json ]; then version=$(jq -r '.packageManager // "" | select(startswith("bun@")) | sub("^bun@"; "")' package.json); fi
           echo "version=${version:-1.4.3}" >> "$GITHUB_OUTPUT"
       - uses: oven-sh/setup-bun@v2
+        if: steps.green.outputs.hit != 'true'
         with:
           bun-version: ${{ steps.bun.outputs.version }}
+          # The install cache is the sticky disk below on Blacksmith.
+          no-cache: ${{ contains(inputs.runner, 'blacksmith') }}
+      - name: Bun install cache (sticky disk, committed by main only)
+        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-bun-install-cache-v1
+          path: ~/.bun/install/cache
+          commit: ${{ github.event_name == 'pull_request' && 'false' || 'on-change' }}
       - name: Install
-        if: inputs.install != ''
+        if: steps.green.outputs.hit != 'true' && inputs.install != ''
         run: ${{ inputs.install }}
       - name: Typecheck
-        if: inputs.typecheck != ''
+        if: steps.green.outputs.hit != 'true' && inputs.typecheck != ''
         env:
           COMMAND: ${{ inputs.typecheck }}
         run: |
@@ -85,7 +118,7 @@ jobs:
             bash -ec "$COMMAND"
           fi
       - name: Lint
-        if: inputs.lint != ''
+        if: steps.green.outputs.hit != 'true' && inputs.lint != ''
         env:
           COMMAND: ${{ inputs.lint }}
         run: |
@@ -95,7 +128,7 @@ jobs:
             bash -ec "$COMMAND"
           fi
       - name: Test
-        if: inputs.test != ''
+        if: steps.green.outputs.hit != 'true' && inputs.test != ''
         env:
           COMMAND: ${{ inputs.test }}
         run: |
@@ -105,7 +138,7 @@ jobs:
             bash -ec "$COMMAND"
           fi
       - name: Build
-        if: inputs.build != ''
+        if: steps.green.outputs.hit != 'true' && inputs.build != ''
         env:
           COMMAND: ${{ inputs.build }}
         run: |
@@ -114,3 +147,9 @@ jobs:
           else
             bash -ec "$COMMAND"
           fi
+      - if: steps.green.outputs.hit != 'true'
+        uses: traumventures/ci/actions/green@v1
+        with:
+          mode: save
+          key: ${{ steps.green.outputs.key }}
+          enabled: ${{ inputs.skip-unchanged }}

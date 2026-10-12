@@ -1,0 +1,87 @@
+name: green
+description: >
+  "Already passed with these inputs?" for one job of a reusable workflow.
+  `mode: lookup` hashes the checked-out tree (git ls-files -s, submodule
+  pointers included) together with `config` (the caller's inputs and the
+  version of this repository) and looks for a marker artifact of that name;
+  `hit` is "true" when one exists, and the job skips its remaining steps.
+  `mode: save` uploads the marker after the job passed.
+
+  Markers are artifacts, not Actions caches: a cache saved by a pull request
+  is invisible to main, so the merge commit, whose tree the pull request
+  already tested, would run everything again. The artifact is visible
+  repository-wide (the job needs `actions: read`; without it lookup reports no
+  hit and the job just runs). Markers expire after 30 days. A pull request's
+  own code could upload a marker for a tree it did not test: this saves
+  runner time against honest reruns, it is not a security boundary.
+
+inputs:
+  mode:
+    description: lookup | save
+    required: true
+  config:
+    description: everything besides the tree that decides the result (the caller's inputs as JSON)
+    default: ""
+  paths:
+    description: pathspecs whose blobs form the key, space separated; default the whole repository
+    default: "."
+  key:
+    description: (save) the key the lookup step returned
+    default: ""
+  enabled:
+    description: "false: never hit, never save (for example a publishing build)"
+    default: "true"
+
+outputs:
+  hit:
+    value: ${{ steps.lookup.outputs.hit }}
+  key:
+    value: ${{ steps.lookup.outputs.key }}
+
+runs:
+  using: composite
+  steps:
+    - id: lookup
+      if: inputs.mode == 'lookup'
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        CONFIG: ${{ inputs.config }}
+        PATHS: ${{ inputs.paths }}
+        ENABLED: ${{ inputs.enabled }}
+        # The version of the reusable workflow: a change here invalidates every marker.
+        CI_SHA: ${{ github.job_workflow_sha }}
+        CI_LOGIC: green-v1
+        GH_TOKEN: ${{ github.token }}
+        JOB: ${{ github.job }}
+      run: |
+        set -euo pipefail
+        read -r -a pathspecs <<< "$PATHS"
+        tree=$(git ls-files -s -- "${pathspecs[@]}" | sha256sum | cut -c1-40)
+        hash=$(printf '%s\n' "$tree" "$CONFIG" "$CI_SHA" "$CI_LOGIC" | sha256sum | cut -c1-32)
+        key="ci-pass-$JOB-$hash"
+        echo "key=$key" >> "$GITHUB_OUTPUT"
+        if [ "$ENABLED" != true ]; then echo "hit=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+        found=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$key&per_page=5" \
+          --jq '[.artifacts[] | select(.expired | not)] | length' 2>/dev/null || echo 0)
+        if [ "${found:-0}" -gt 0 ]; then
+          echo "hit=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::$JOB already passed with these inputs ($key); skipped"
+          echo "### $JOB: already passed with these inputs, skipped (\`$key\`)" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "hit=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - if: inputs.mode == 'save' && inputs.enabled == 'true'
+      shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/ci-pass"
+        echo "$GITHUB_SHA $GITHUB_RUN_ID" > "$RUNNER_TEMP/ci-pass/pass"
+    - if: inputs.mode == 'save' && inputs.enabled == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.key }}
+        path: ${{ runner.temp }}/ci-pass/pass
+        retention-days: 30
+        overwrite: true
+        if-no-files-found: error
