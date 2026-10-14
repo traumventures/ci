@@ -60,6 +60,14 @@ runs:
         rm -rf "$TARGET"
         mkdir -p "$(dirname "$TARGET")"
         ln -s "$STICKY/target" "$TARGET"
+        # A link is not a directory, so `target/` in .gitignore does not hide
+        # it: exclude it, or "is the checkout clean?" checks (git status
+        # --porcelain) see an untracked file.
+        if root="$(git -C "$(dirname "$TARGET")" rev-parse --show-toplevel 2>/dev/null)"; then
+          exclude="$(git -C "$root" rev-parse --absolute-git-dir)/info/exclude"
+          mkdir -p "$(dirname "$exclude")"
+          echo "/$(realpath -s --relative-to="$root" "$TARGET")" >> "$exclude"
+        fi
         echo "CARGO_INCREMENTAL=${{ inputs.incremental == 'true' && '1' || '0' }}" >> "$GITHUB_ENV"
         "${{ github.action_path }}/../rust-sticky-hygiene.sh" "$STICKY" "${{ inputs.max-gb }}"
     - uses: traumventures/ci/actions/source-mtimes@v1
