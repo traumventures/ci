@@ -7,9 +7,9 @@ name: rust
 # Skips draft pull requests, and every step after checkout when this job
 # already passed with the same tree and inputs (actions/green). On Blacksmith
 # the target directory and cargo's registry live on a sticky disk with
-# incremental compilation, so a run rebuilds what changed; only main commits
-# the disk, pull requests start from main's snapshot and discard their writes.
-# Other runners keep Swatinem/rust-cache, saved by main only.
+# incremental compilation and restored source mtimes (actions/rust-cache), so
+# a run rebuilds only crates whose inputs changed. Other runners keep
+# Swatinem/rust-cache, saved by main only.
 #
 #   jobs:
 #     rust:
@@ -62,7 +62,6 @@ jobs:
       CARGO_TERM_COLOR: always
       # Incremental only pays off with a persistent target directory.
       CARGO_INCREMENTAL: ${{ contains(inputs.runner, 'blacksmith') && '1' || '0' }}
-      STICKY: /home/runner/.ci-rust
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
@@ -92,27 +91,15 @@ jobs:
             rustup component add rustfmt clippy
           fi
           rustc --version
-      - name: Target and registry (sticky disk, committed by main only)
+      # Target directory, registry and incremental caches on a sticky disk,
+      # unchanged sources dated back to the build that compiled them
+      # (actions/rust-cache): a run rebuilds only crates whose inputs changed.
+      - name: Target and registry (sticky disk)
         if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
-        uses: useblacksmith/stickydisk@v1
+        uses: traumventures/ci/actions/rust-cache@v1
         with:
-          key: ${{ github.repository }}-rust-${{ inputs.working-directory }}-v1
-          path: /home/runner/.ci-rust
-          commit: ${{ github.event_name == 'pull_request' && 'false' || 'on-change' }}
-      - name: Use the sticky disk
-        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
-        run: |
-          set -euo pipefail
-          sudo chown "$(id -u):$(id -g)" "$STICKY"
-          mkdir -p "$STICKY/target" "$STICKY/registry" "$STICKY/git"
-          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-          for dir in registry git; do rm -rf "${cargo_home:?}/$dir"; ln -s "$STICKY/$dir" "$cargo_home/$dir"; done
-          echo "CARGO_TARGET_DIR=$STICKY/target" >> "$GITHUB_ENV"
-          # Bounded: stale incremental sessions and test binaries of removed
-          # crates accumulate; past 80 % the next build starts cold once.
-          used=$(df --output=pcent "$STICKY" | tail -1 | tr -dc '0-9')
-          echo "sticky disk: $(df -h --output=used,size "$STICKY" | tail -1) used (${used}%)"
-          if (( used > 80 )); then echo "::warning::sticky disk ${used}% full, target dropped"; rm -rf "${STICKY:?}/target"; mkdir "$STICKY/target"; fi
+          key: ${{ inputs.working-directory }}
+          workspace: ${{ inputs.working-directory }}
       - uses: Swatinem/rust-cache@v2
         if: steps.green.outputs.hit != 'true' && !contains(inputs.runner, 'blacksmith')
         with:

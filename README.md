@@ -28,6 +28,9 @@ cache) and traumwohnung's preview workflows (`runs-on: [self-hosted, traumventur
 
 | `actions/await-ci` | what `gate.yml` runs, for a step inside an existing job |
 | `actions/green` | the "already passed" marker the workflows above use (lookup/save) |
+| `actions/rust-cache` | cargo target, registry and incremental caches on a sticky disk, for jobs that run cargo themselves |
+| `actions/bun-cache` | Bun's install cache on a sticky disk, for jobs that run `bun install` themselves |
+| `actions/source-mtimes` | dates unchanged sources back to the build that compiled them, so mtime-based tools reuse a kept build directory |
 
 **Skipping what already passed.** `typescript`, `rust`, `go` and `docker`
 (build checks, not publishing) skip draft pull requests and, when the job
@@ -43,10 +46,28 @@ skipped.
 **Caches.** On Blacksmith, state that only speeds things up lives on sticky
 disks: Bun's install cache, Rust's target directory and registry (with
 incremental builds), Go's module and build caches, Docker layers
-(Blacksmith's BuildKit builder). Only runs on `main` commit them; a pull
-request starts from `main`'s snapshot and its writes are discarded, so
-branches neither overwrite each other nor evict `main`'s state. Other
-runners fall back to the Actions cache, saved by `main` only.
+(Blacksmith's BuildKit builder). Every passing run commits its disk when it
+changed, pull requests included. Committing only on `main` left the disks
+empty: `main`'s run is usually skipped (the pull request tested its tree), so
+nothing ever filled them and every pull request built cold (Rust: 5-8 minutes
+of dependencies). The caches are keyed on content (cargo fingerprints, Go
+build IDs, Bun's package store, BuildKit digests), so a snapshot left by
+another branch is only less warm, never wrong; concurrent jobs each work on a
+clone and the last commit wins. A pull request's code can write into a disk
+other runs mount; these are private repositories of one team, the same trust
+the `green` markers already rely on. Other runners fall back to the Actions
+cache, saved by `main` only.
+
+Cargo judges freshness by file mtime, and a checkout dates every file to the
+checkout, so a kept target directory still rebuilt every workspace crate.
+`actions/source-mtimes` records the mtimes after a passing build and dates
+unchanged files back on the next run: only crates whose inputs changed
+rebuild.
+
+Jobs that run cargo or `bun install` themselves get the same disks from
+`actions/rust-cache` (a drop-in for `Swatinem/rust-cache`: `target/` becomes a
+link to the disk) and `actions/bun-cache` (instead of an `actions/cache` step
+on `~/.bun/install/cache`).
 
 **Runner environment.** Blacksmith VMs behave like GitHub's hosted Ubuntu:
 Docker, `services:`, `sudo`, published ports on localhost; nothing is shared

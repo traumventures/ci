@@ -1,0 +1,36 @@
+name: source-mtimes
+description: >
+  Lets a build tool that judges freshness by file mtime (cargo, make, tsc
+  --incremental) reuse a build directory kept on a sticky disk. A fresh
+  checkout dates every file to the checkout, so cargo rebuilt every workspace
+  crate on every run although its target directory survived. The post step
+  records the git blob id and mtime of every tracked file next to the build
+  directory; the main step puts back the recorded mtime for every file whose
+  content (blob id) is unchanged. Changed, new and locally edited files keep
+  the checkout time and rebuild. A file is only ever dated back to the build
+  that compiled exactly its content.
+
+  Use it right after the sticky disk is mounted, with the manifest on that
+  disk: post steps run in reverse order, so the manifest is written before the
+  disk is committed, and it always describes the build that produced the disk.
+
+    - uses: useblacksmith/stickydisk@v1
+      with: { key: ..., path: /home/runner/.ci-rust }
+    - uses: traumventures/ci/actions/source-mtimes@v1
+      with: { manifest: /home/runner/.ci-rust/source-mtimes }
+
+inputs:
+  manifest:
+    description: file on the sticky disk that holds the recorded mtimes
+    required: true
+  repository:
+    description: the git checkout whose tracked files are covered
+    default: ${{ github.workspace }}
+
+runs:
+  using: node24
+  main: index.mjs
+  post: index.mjs
+  # Only a passing job's build state is worth recording; the sticky disk does
+  # not commit after a failed step either.
+  post-if: success()

@@ -64,13 +64,13 @@ jobs:
           cache-dependency-path: ${{ inputs.working-directory }}/go.sum
           # The caches are the sticky disk below on Blacksmith.
           cache: ${{ !contains(inputs.runner, 'blacksmith') }}
-      - name: Go caches (sticky disk, committed by main only)
+      - name: Go caches (sticky disk)
         if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
         uses: useblacksmith/stickydisk@v1
         with:
           key: ${{ github.repository }}-go-${{ inputs.working-directory }}-v1
           path: /home/runner/.ci-go
-          commit: ${{ github.event_name == 'pull_request' && 'false' || 'on-change' }}
+          commit: on-change
       - name: Use the sticky disk
         if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
         run: |

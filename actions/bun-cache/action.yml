@@ -1,0 +1,19 @@
+name: bun-cache
+description: >
+  Bun's global install cache on a Blacksmith sticky disk, for jobs that run
+  `bun install` themselves (the typescript workflow uses the same disk). A
+  drop-in for an actions/cache step on ~/.bun/install/cache: `bun install`
+  then links from local disk instead of downloading. Use it after
+  oven-sh/setup-bun with `no-cache: true`. Every passing run commits the disk
+  when an install added something (see the README, "Caches").
+
+    - uses: traumventures/ci/actions/bun-cache@v1
+
+runs:
+  using: composite
+  steps:
+    - uses: useblacksmith/stickydisk@v1
+      with:
+        key: ${{ github.repository }}-bun-install-cache-v1
+        path: ~/.bun/install/cache
+        commit: on-change
