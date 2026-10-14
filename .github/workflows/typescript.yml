@@ -11,7 +11,7 @@ name: typescript
 # Skips draft pull requests, and every step after checkout when this job
 # already passed with the same tree and inputs (actions/green; the caller
 # grants `actions: read`). Bun's install cache lives on a Blacksmith sticky
-# disk that only main commits.
+# disk (actions/bun-cache).
 #
 #   jobs:
 #     typescript:
@@ -45,6 +45,13 @@ on:
       submodules:
         type: string
         default: "false"
+      cargo-workspace:
+        description: >
+          a Cargo workspace the steps build (WASM, a server binary for tests),
+          relative to the repository root; its target directory and registry
+          then live on a sticky disk too (actions/rust-cache). "" for none
+        type: string
+        default: ""
       runner:
         description: runs-on as JSON
         type: string
@@ -95,13 +102,15 @@ jobs:
           bun-version: ${{ steps.bun.outputs.version }}
           # The install cache is the sticky disk below on Blacksmith.
           no-cache: ${{ contains(inputs.runner, 'blacksmith') }}
-      - name: Bun install cache (sticky disk, committed by main only)
+      - name: Bun install cache (sticky disk)
         if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
-        uses: useblacksmith/stickydisk@v1
+        uses: traumventures/ci/actions/bun-cache@v1
+      - name: Cargo target and registry (sticky disk)
+        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith') && inputs.cargo-workspace != ''
+        uses: traumventures/ci/actions/rust-cache@v1
         with:
-          key: ${{ github.repository }}-bun-install-cache-v1
-          path: ~/.bun/install/cache
-          commit: ${{ github.event_name == 'pull_request' && 'false' || 'on-change' }}
+          key: typescript-${{ inputs.cargo-workspace }}
+          workspace: ${{ inputs.cargo-workspace }}
       - name: Install
         if: steps.green.outputs.hit != 'true' && inputs.install != ''
         run: ${{ inputs.install }}

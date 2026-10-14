@@ -94,7 +94,6 @@ jobs:
         if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
         uses: useblacksmith/setup-docker-builder@v1
         with:
-          cache-key: ${{ github.repository }}/${{ inputs.image }}
           platforms: ${{ inputs.platforms }}
           # Bounded; BuildKit keeps the most recently used layers.
           max-cache-size-mb: "20000"

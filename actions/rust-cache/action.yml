@@ -1,0 +1,70 @@
+name: rust-cache
+description: >
+  Cargo's target directory, registry and git checkouts on a Blacksmith sticky
+  disk, with incremental builds, for jobs that run cargo themselves (the rust
+  workflow uses the same setup). A drop-in for Swatinem/rust-cache on
+  Blacksmith runners: <workspace>/<target> becomes a link to the disk, so
+  paths like target/debug/<bin> or target/llvm-cov-target keep working.
+
+  The disk keeps the whole build, workspace crates included, and
+  source-mtimes dates unchanged sources back to the build that compiled them,
+  so a run rebuilds only crates whose inputs changed. Every passing run
+  commits the disk when it changed (see the README, "Caches").
+
+    - uses: traumventures/ci/actions/rust-cache@v1
+      with:
+        key: quality            # one disk per distinct build (profile, features, tool)
+        workspace: .            # the Cargo workspace
+        target: target          # its target directory, relative to the workspace
+
+inputs:
+  key:
+    description: names the disk within the repository; jobs building differently need different keys
+    required: true
+  workspace:
+    description: the Cargo workspace directory, relative to the repository root
+    default: "."
+  target:
+    description: the target directory, relative to the workspace
+    default: target
+  incremental:
+    description: >
+      "true" keeps rustc's incremental caches (fast rebuilds of changed
+      workspace crates, roughly doubles the disk); "false" for builds that
+      rarely rebuild the same crates incrementally (coverage, mutation testing)
+    default: "true"
+  max-gb:
+    description: the target directory is dropped (one cold build) once the disk holds more; disks are billed per GB
+    default: "40"
+
+runs:
+  using: composite
+  steps:
+    - uses: useblacksmith/stickydisk@v1
+      with:
+        key: ${{ github.repository }}-rust-${{ inputs.key }}-v1
+        path: /home/runner/.ci-rust-${{ inputs.key }}
+        commit: on-change
+    - name: Target, registry and git checkouts on the disk
+      shell: bash
+      env:
+        STICKY: /home/runner/.ci-rust-${{ inputs.key }}
+        TARGET: ${{ inputs.workspace }}/${{ inputs.target }}
+      run: |
+        set -euo pipefail
+        sudo chown "$(id -u):$(id -g)" "$STICKY"
+        mkdir -p "$STICKY/target" "$STICKY/registry" "$STICKY/git"
+        cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+        mkdir -p "$cargo_home"
+        for dir in registry git; do rm -rf "${cargo_home:?}/$dir"; ln -s "$STICKY/$dir" "$cargo_home/$dir"; done
+        rm -rf "$TARGET"
+        mkdir -p "$(dirname "$TARGET")"
+        ln -s "$STICKY/target" "$TARGET"
+        echo "CARGO_INCREMENTAL=${{ inputs.incremental == 'true' && '1' || '0' }}" >> "$GITHUB_ENV"
+        "${{ github.action_path }}/../rust-sticky-hygiene.sh" "$STICKY" "${{ inputs.max-gb }}"
+    - uses: traumventures/ci/actions/source-mtimes@v1
+      with:
+        manifest: /home/runner/.ci-rust-${{ inputs.key }}/source-mtimes
+        # The files git tracks at the workspace: a nested checkout of another
+        # repository (open-traummail/) has its own index.
+        repository: ${{ inputs.workspace }}
