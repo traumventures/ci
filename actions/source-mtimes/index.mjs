@@ -1,7 +1,7 @@
 // No dependencies: runs from the action checkout as is. See action.yml.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, lstatSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const input = (name) => process.env[`INPUT_${name.toUpperCase()}`] ?? "";
 const git = (root, args) =>
@@ -37,7 +37,7 @@ export function save(root, manifest) {
     } catch {
       continue;
     }
-    lines.push(`${blob} ${stat.mtimeNs} ${path}\n`);
+    lines.push(`${blob} ${stat.mtimeNs} ${path}\0`);  // NUL: git paths may contain newlines
   }
   writeFileSync(`${manifest}.tmp`, lines.join(""));
   renameSync(`${manifest}.tmp`, manifest);
@@ -49,7 +49,7 @@ export function restore(root, manifest) {
   const current = trackedBlobs(root);
   let restored = 0;
   let changed = 0;
-  for (const line of readFileSync(manifest, "utf8").split("\n")) {
+  for (const line of readFileSync(manifest, "utf8").split("\0")) {
     if (!line) continue;
     const first = line.indexOf(" ");
     const second = line.indexOf(" ", first + 1);
@@ -72,7 +72,7 @@ export function restore(root, manifest) {
 }
 
 function main() {
-  const root = input("repository") || process.cwd();
+  const root = resolve(process.env.GITHUB_WORKSPACE || process.cwd(), input("repository") || ".");
   const manifest = input("manifest");
   if (!manifest) throw new Error("input manifest is required");
   if (process.env.STATE_isPost === "true") {

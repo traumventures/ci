@@ -84,4 +84,19 @@ describe("source-mtimes", () => {
     expect(restore(sub, manifest)).toEqual({ restored: 1, changed: 0 });
     expect(mtime(join(sub, "lib.rs"))).toBe(old.getTime());
   });
+
+  test("a path with a newline survives the manifest", () => {
+    const { dir, git } = repo();
+    writeFileSync(join(dir, "odd\nname.rs"), "x\n");
+    git("add", ".");
+    git("commit", "-qm", "odd");
+    const old = new Date("2026-01-01T00:00:00Z");
+    utimesSync(join(dir, "odd\nname.rs"), old, old);
+    const manifest = join(dir, ".git", "manifest");
+    expect(save(dir, manifest)).toBe(3);
+    const now = new Date();
+    utimesSync(join(dir, "odd\nname.rs"), now, now);
+    expect(restore(dir, manifest)).toEqual({ restored: 3, changed: 0 });
+    expect(mtime(join(dir, "odd\nname.rs"))).toBe(old.getTime());
+  });
 });

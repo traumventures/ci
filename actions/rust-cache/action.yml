@@ -67,4 +67,4 @@ runs:
         manifest: /home/runner/.ci-rust-${{ inputs.key }}/source-mtimes
         # The files git tracks at the workspace: a nested checkout of another
         # repository (open-traummail/) has its own index.
-        repository: ${{ github.workspace }}/${{ inputs.workspace }}
+        repository: ${{ inputs.workspace }}
