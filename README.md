@@ -17,7 +17,7 @@ cache) and traumwohnung's preview workflows (`runs-on: [self-hosted, traumventur
 | `go.yml` | gofmt, `go vet`, `go test -race` |
 | `docker.yml` | builds an image; with `push: true` publishes `rg.fr-par.scw.cloud/traumventures/<repository>/<image>` as `:<sha>`, on a tag `v1.2.3` also `:1.2.3` |
 
-| `gate.yml` | the first job of a deploy or release: the commit is on `main` and its `ci` passed; waits for a run in progress |
+| `gate.yml` | the first job of a deploy or release: the commit is on `main` (and with the default `await-ci: true` its `ci` passed; waits for a run in progress). CI runs only on demand and inside deploys and releases, so those pass `await-ci: false` and call their own `ci.yml` |
 
 | `actions/postgres` (composite action) | a throwaway Postgres on `127.0.0.1`, preferred port or the next free one (`url`/`port` outputs); jobs share one network namespace |
 
@@ -91,27 +91,24 @@ compatibility matrix, a Node runtime target); they say so in a comment.
 
 ## The standard layout of a repository
 
-**`.github/workflows/ci.yml`**: every pull request and every push to `main`.
+**`.github/workflows/ci.yml`**: on demand only (`gh workflow run ci.yml --ref
+<branch>`), and as the first stage of a deploy or release, which calls it.
+Nothing runs on its own for pull requests or pushes to `main`.
 
 ```yaml
 name: ci
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
   workflow_dispatch:
+  workflow_call:              # deploy-production.yml / release.yml run it first
 
 permissions:
   contents: read
   actions: read               # the "already passed" lookup
 
-# Pull requests: a new push cancels the older run. main: every commit keeps
-# its own run and result; gates ask for exactly that commit.
 concurrency:
-  group: ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   typescript:                 # or rust / go, one job per language or package
@@ -122,9 +119,9 @@ jobs:
       image: my-service
 ```
 
-**`.github/workflows/release.yml`**: publishes. A tag `v<version>` for
-versioned artifacts; repositories whose consumers pin commits (dreamflared)
-also publish every push to `main`.
+**`.github/workflows/release.yml`**: publishes, on a tag `v<version>` (or a
+manual dispatch). It runs `ci.yml` first; the gate only checks that the
+commit is on `main`.
 
 ```yaml
 name: release
@@ -138,10 +135,14 @@ permissions:
   actions: read
 
 jobs:
-  gate:                       # only a commit of main whose ci passed is published
+  gate:                       # only a commit of main is published
     uses: traumventures/ci/.github/workflows/gate.yml@v1
+    with: { await-ci: false }
+  ci:                         # ... and only after its ci passed
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
   docker:
-    needs: gate
+    needs: [gate, ci]
     uses: traumventures/ci/.github/workflows/docker.yml@v1
     with:
       image: my-service
@@ -155,8 +156,9 @@ Jobs a repository writes itself (not through these workflows) add
 **`.github/workflows/deploy-production.yml`**: only repositories with a
 production stack (traumwohnung, common-infra): a fast-forward of
 `deploy/production` to a commit of `main` deploys it (see
-`deployment/cd/README.md` there), after a `gate` job (`gate.yml`) confirmed
-that `ci` passed for that commit. These run on their own deploy runners, not
+`deployment/cd/README.md` there), after a `gate` job (`gate.yml`,
+`await-ci: false`) confirmed the commit is on `main` and a `ci` job (the
+repository's `ci.yml`) passed for it. These run on their own deploy runners, not
 on the shared pool.
 
 Registry credentials: one Scaleway IAM application per repository

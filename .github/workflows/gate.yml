@@ -4,11 +4,20 @@ name: gate
 # and its CI passed (actions/await-ci); waits for a CI run still in progress.
 # No secrets, no checkout.
 #
+# CI runs only on demand (workflow_dispatch) and inside deploys and releases,
+# not on pull requests or pushes to main. A deploy or release therefore runs
+# the repository's ci.yml itself (it declares `workflow_call`) and asks the
+# gate only whether the commit is on main:
+#
 #   jobs:
 #     gate:
 #       uses: traumventures/ci/.github/workflows/gate.yml@v1
+#       with: { await-ci: false }
+#     ci:
+#       uses: ./.github/workflows/ci.yml
+#       secrets: inherit
 #     publish:
-#       needs: gate
+#       needs: [gate, ci]
 #       ...
 #
 # The caller grants `actions: read` and `contents: read` (workflow-level
@@ -27,18 +36,23 @@ on:
       wait-minutes:
         type: string
         default: "30"
+      await-ci:
+        description: false = only check that the commit is on the branch (the caller runs ci.yml itself)
+        type: boolean
+        default: true
       runner:
         type: string
         default: '["blacksmith-2vcpu-ubuntu-2404"]'
 
 jobs:
   gate:
-    name: on ${{ inputs.branch }}, ${{ inputs.workflow }} green
+    name: on ${{ inputs.branch }}${{ inputs.await-ci && format(', {0} green', inputs.workflow) || '' }}
     runs-on: ${{ fromJSON(inputs.runner) }}
-    timeout-minutes: 40
+    timeout-minutes: ${{ inputs.await-ci && 40 || 5 }}
     steps:
       - uses: traumventures/ci/actions/await-ci@v1
         with:
           workflow: ${{ inputs.workflow }}
           branch: ${{ inputs.branch }}
           wait-minutes: ${{ inputs.wait-minutes }}
+          branch-only: ${{ !inputs.await-ci }}
