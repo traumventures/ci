@@ -15,6 +15,9 @@ inputs:
     default: main
   wait-minutes:
     default: "30"
+  branch-only:
+    description: '"true": only check that the commit is on the branch (the caller runs the CI itself)'
+    default: "false"
 
 runs:
   using: composite
@@ -29,3 +32,4 @@ runs:
       run: >
         bun "$GITHUB_ACTION_PATH/await-ci.ts" '${{ inputs.sha }}'
         --workflow '${{ inputs.workflow }}' --branch '${{ inputs.branch }}' --wait '${{ inputs.wait-minutes }}'
+        ${{ inputs.branch-only == 'true' && '--branch-only' || '' }}

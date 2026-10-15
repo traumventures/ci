@@ -4,7 +4,12 @@
  * before anything is built or published (actions/await-ci, workflow gate.yml).
  *
  *   bun await-ci.ts <sha> [--workflow ci.yml] [--branch main] [--wait <minutes>]
+ *   bun await-ci.ts <sha> [--branch main] --branch-only
  *   exit 0 green, 1 red or not on the branch, 3 no result in time, 2 usage
+ *
+ * --branch-only checks only that the commit is on the branch: for a deploy or
+ * release that runs the CI itself (a `ci` job calling the repository's
+ * ci.yml), since CI no longer runs on its own on pushes to main.
  *
  * Green means: the commit is on the branch, and the newest run of the
  * workflow on that branch for exactly this commit (push or a manual dispatch)
@@ -76,6 +81,7 @@ async function main() {
   const workflow = option(args, "--workflow", "ci.yml");
   const branch = option(args, "--branch", "main");
   const waitMinutes = Number(option(args, "--wait", "0"));
+  const branchOnly = args.includes("--branch-only");
   if (!sha || !/^[0-9a-f]{40}$/.test(sha) || !Number.isFinite(waitMinutes)) {
     console.error("usage: bun await-ci.ts <full sha> [--workflow ci.yml] [--branch main] [--wait <minutes>]");
     process.exit(2);
@@ -87,6 +93,10 @@ async function main() {
   if (compare.status !== "identical" && compare.status !== "ahead") {
     console.log(`::error::${sha} is not on ${branch} (compare: ${compare.status}). Only commits of ${branch} are deployed or released.`);
     process.exit(1);
+  }
+  if (branchOnly) {
+    console.log(`${sha.slice(0, 12)} is on ${branch}`);
+    process.exit(0);
   }
 
   const deadline = Date.now() + waitMinutes * 60_000;
