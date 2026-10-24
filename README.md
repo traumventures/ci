@@ -12,7 +12,7 @@ cache) and traumwohnung's preview workflows (`runs-on: [self-hosted, traumventur
 
 | Workflow | Does |
 |---|---|
-| `typescript.yml` | Bun 1.4.3: `install --frozen-lockfile`, then `typecheck` (script, else `bun check`), `lint`, `test`, `build` when the package defines them |
+| `typescript.yml` | Bun 1.4.4: `install --frozen-lockfile`, then `typecheck` (script, else `bun check`), `lint`, `test`, `build` when the package defines them |
 | `rust.yml` | `cargo fmt --check`, Clippy `-D warnings`, `cargo test`, all `--locked`; toolchain from `rust-toolchain.toml` |
 | `go.yml` | gofmt, `go vet`, `go test -race` |
 | `docker.yml` | builds an image; with `push: true` publishes `rg.fr-par.scw.cloud/traumventures/<repository>/<image>` as `:<sha>`, on a tag `v1.2.3` also `:1.2.3` |
@@ -78,7 +78,7 @@ with `""`.
 
 ## Bun, not Node
 
-Every JavaScript/TypeScript project runs on Bun 1.4.3: `bun install`,
+Every JavaScript/TypeScript project runs on Bun 1.4.4: `bun install`,
 `bun run`, `bunx`, `bun test`, `bun pm pack`. Type checks use `bun check`
 (Bun's native checker: same errors as `tsc`, all cores; `bun check -p
 <tsconfig>`), not `tsc --noEmit`. **No package.json script may be called
