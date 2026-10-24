@@ -24,7 +24,7 @@ on:
         type: string
         default: "."
       bun-version:
-        description: Bun version; the org standard is 1.4.3 (a repository's .bun-version or packageManager bun@ wins)
+        description: Bun version; the org standard is 1.4.4 (a repository's .bun-version or packageManager bun@ wins)
         type: string
         default: ""
       install:
@@ -95,7 +95,7 @@ jobs:
           version="${{ inputs.bun-version }}"
           if [ -z "$version" ] && [ -f .bun-version ]; then version=$(tr -d '[:space:]' < .bun-version); fi
           if [ -z "$version" ] && [ -f package.json ]; then version=$(jq -r '.packageManager // "" | select(startswith("bun@")) | sub("^bun@"; "")' package.json); fi
-          echo "version=${version:-1.4.3}" >> "$GITHUB_OUTPUT"
+          echo "version=${version:-1.4.4}" >> "$GITHUB_OUTPUT"
       - uses: oven-sh/setup-bun@v2
         if: steps.green.outputs.hit != 'true'
         with:
