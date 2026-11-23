@@ -36,9 +36,11 @@ inputs:
     default: target
   incremental:
     description: >
-      "true" keeps rustc's incremental caches (fast rebuilds of changed
-      workspace crates, roughly doubles the size); "false" for builds that
-      rarely rebuild the same crates incrementally (coverage, mutation testing)
+      "true" keeps cargo's profile default (dev/test: workspace crates
+      incremental, fast rebuilds of changed crates, roughly doubles the size;
+      CARGO_INCREMENTAL stays unset); "false" sets CARGO_INCREMENTAL=0, for
+      builds that rarely rebuild the same crates incrementally (coverage,
+      mutation testing)
     default: "true"
   max-gb:
     description: (self-hosted) a lane's target directory is dropped (one cold build) once it holds more

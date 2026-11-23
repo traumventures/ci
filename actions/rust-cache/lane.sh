@@ -63,17 +63,23 @@ if top="$(git -C "$(dirname "$TARGET")" rev-parse --show-toplevel 2>/dev/null)";
   mkdir -p "$(dirname "$exclude")"
   echo "/$(realpath -s --relative-to="$top" "$TARGET")" >> "$exclude"
 fi
-echo "CARGO_INCREMENTAL=$([ "$INCREMENTAL" = true ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+# "true": cargo's profile default (the dev and test profiles build workspace
+# members and path dependencies incrementally, registry crates not), left
+# unset because sccache refuses to run under CARGO_INCREMENTAL=1.
+[ "$INCREMENTAL" = true ] || echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
 { echo "dir=$lane"; echo "persistent=$persistent"; } >> "$GITHUB_OUTPUT"
 
 # sccache (in the runner image) as a second layer below the lanes: it caches
 # the non-incremental crates (registry dependencies, everything when
 # incremental is "false"), so a cold lane, a new key or another repository
-# with the same dependencies does not compile them again. Local disk storage
+# with the same dependencies does not compile them again; it passes
+# incremental crates through to rustc uncached. Local disk storage
 # allows one server per directory, so each runner has its own (one job at a
 # time); the server listens on a socket of this job, not on localhost:4226,
 # which all our runners would share.
-if [ "${SCCACHE:-true}" = true ] && command -v sccache >/dev/null; then
+if [ "${CARGO_INCREMENTAL:-}" = 1 ]; then
+  echo "rust-cache: CARGO_INCREMENTAL=1 in the job's environment, sccache off (it refuses to run under it)"
+elif [ "${SCCACHE:-true}" = true ] && command -v sccache >/dev/null; then
   sccache_dir="$root/sccache/$(safe "${RUNNER_NAME:-runner}")"
   mkdir -p "$sccache_dir"
   {
@@ -81,7 +87,6 @@ if [ "${SCCACHE:-true}" = true ] && command -v sccache >/dev/null; then
     echo "SCCACHE_DIR=$sccache_dir"
     echo "SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-20G}"
     echo "SCCACHE_SERVER_UDS=$RUNNER_TEMP/sccache.sock"
-    echo "SCCACHE_ALLOW_INCREMENTAL=1"   # incremental workspace crates: compiled, not cached
     echo "SCCACHE_IDLE_TIMEOUT=0"
   } >> "$GITHUB_ENV"
   echo "rust-cache: sccache $(sccache --version | cut -d" " -f2) in $sccache_dir"
