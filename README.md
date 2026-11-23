@@ -61,10 +61,15 @@ the dev box's slow upstream.
 - **Rust** (`actions/rust-cache`): each repository and key has two *lanes*,
   persistent target directories; a job takes a free lane and holds it under a
   lock until it ends (a third concurrent job waits, after 20 minutes it
-  builds cold), so jobs never share a target directory. `<workspace>/target`
-  is a link to the lane, builds are incremental, and
-  `actions/source-mtimes` dates unchanged sources back to the passing build
-  that produced the lane: only crates whose inputs changed rebuild. The
+  builds cold), so jobs never share a target directory. Cargo builds in the
+  lane through `CARGO_TARGET_DIR` (one path on every runner; build script
+  outputs name it), `<workspace>/target` is a link to it, builds are
+  incremental, and `actions/source-mtimes` dates unchanged sources back to
+  the passing build that produced the lane: only crates whose inputs
+  changed rebuild. The checkout path differs per runner
+  (`/home/gh-ci/work/devbox-N`) and cargo does not notice a changed
+  `CARGO_MANIFEST_DIR` baked in by `env!`, so after a build from another
+  runner the workspace crates rebuild (dependencies stay). The
   record is consumed when read and written again only by a passing job, so
   after a failed or cancelled build the next one rebuilds the workspace
   crates (never stale). A lane is dropped above 40 GB (`max-gb`) or when the

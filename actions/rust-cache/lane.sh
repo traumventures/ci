@@ -9,7 +9,8 @@ set -euo pipefail
 
 root=${CI_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/traumventures-ci}
 safe() { printf '%s' "$1" | tr -c 'A-Za-z0-9_-' '_'; }
-base="$root/rust/$(safe "$GITHUB_REPOSITORY")/$(safe "$KEY")"
+# rust-lanes/: lanes with CARGO_TARGET_DIR (below); the first layout (rust/) linked only.
+base="$root/rust-lanes/$(safe "$GITHUB_REPOSITORY")/$(safe "$KEY")"
 mkdir -p "$base"
 
 # A lane is held by a background flock that lives until the job ends: the
@@ -67,6 +68,21 @@ fi
 # members and path dependencies incrementally, registry crates not), left
 # unset because sccache refuses to run under CARGO_INCREMENTAL=1.
 [ "$INCREMENTAL" = true ] || echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+# Cargo builds in the lane by its own path, the same on every runner: build
+# script outputs (OUT_DIR, -L native=...) name it, and a lane is reused by
+# whichever runner gets the next job. The link above stays for tools and
+# scripts that expect <workspace>/target.
+echo "CARGO_TARGET_DIR=$lane/target" >> "$GITHUB_ENV"
+# The checkout's path differs per runner (/home/gh-ci/work/devbox-N/...), and
+# cargo does not rebuild a crate when only the CARGO_MANIFEST_DIR it baked in
+# (env!, file!) changed. After a build from another path, unchanged sources
+# are not dated back: the workspace crates rebuild, dependencies stay.
+here=$(realpath "$(dirname "$TARGET")")
+if [ "$persistent" = true ] && [ -f "$lane/workspace" ] && [ "$(cat "$lane/workspace")" != "$here" ]; then
+  echo "rust-cache: last built from $(cat "$lane/workspace"), now $here: the workspace crates rebuild"
+  rm -f "$lane/source-mtimes"
+fi
+echo "$here" > "$lane/workspace"
 { echo "dir=$lane"; echo "persistent=$persistent"; } >> "$GITHUB_OUTPUT"
 
 # sccache (in the runner image) as a second layer below the lanes: it caches
@@ -112,7 +128,7 @@ if (( ${used_gb:-0} > MAX_GB || disk > 85 )); then
   mkdir -p "$lane/target"
 fi
 # Lanes of any repository unused for 14 days (locked lanes are in use, skipped).
-find "$root/rust" -mindepth 3 -maxdepth 3 -type d -name 'lane-*' 2>/dev/null | while read -r other; do
+find "$root/rust-lanes" -mindepth 3 -maxdepth 3 -type d -name 'lane-*' 2>/dev/null | while read -r other; do
   [ "$other" = "$lane" ] || [ ! -d "$other/target" ] && continue
   [ -n "$(find "$other" -maxdepth 1 -name .last-used -mtime -14 2>/dev/null)" ] && continue
   if flock -n "$other/.lock" rm -rf -- "$other/target" "$other/source-mtimes" 2>/dev/null; then

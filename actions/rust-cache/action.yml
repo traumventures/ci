@@ -10,9 +10,11 @@ description: >
   persistent cache directory on the host (a link, see the README, "Caches"):
   nothing is uploaded or downloaded. Each repository and key has a few lanes;
   a job holds one lane exclusively until it ends, so concurrent jobs never
-  share a target directory. source-mtimes dates unchanged sources back to the
-  passing build that produced the lane, so a run rebuilds only crates whose
-  inputs changed. Cargo's registry and git checkouts are the runner's own
+  share a target directory. Cargo builds there through CARGO_TARGET_DIR (the
+  same path on every runner). source-mtimes dates unchanged sources back to
+  the passing build that produced the lane, so a run rebuilds only crates
+  whose inputs changed; after a build from another runner's checkout path the
+  workspace crates rebuild (their CARGO_MANIFEST_DIR changed). Cargo's registry and git checkouts are the runner's own
   persistent ~/.cargo.
 
   On GitHub-hosted runners (public repositories): Swatinem/rust-cache, saved
