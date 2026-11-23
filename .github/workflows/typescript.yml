@@ -10,8 +10,8 @@ name: typescript
 #
 # Skips draft pull requests, and every step after checkout when this job
 # already passed with the same tree and inputs (actions/green; the caller
-# grants `actions: read`). Bun's install cache lives on a Blacksmith sticky
-# disk (actions/bun-cache).
+# grants `actions: read`). Bun's install cache persists on our runners'
+# host (actions/bun-cache; the Actions cache on GitHub-hosted runners).
 #
 #   jobs:
 #     typescript:
@@ -48,14 +48,16 @@ on:
       cargo-workspace:
         description: >
           a Cargo workspace the steps build (WASM, a server binary for tests),
-          relative to the repository root; its target directory and registry
-          then live on a sticky disk too (actions/rust-cache). "" for none
+          relative to the repository root; its target directory then persists
+          too (actions/rust-cache). "" for none
         type: string
         default: ""
       runner:
-        description: runs-on as JSON
+        description: >
+          runs-on as JSON; default: our runners ["self-hosted","traumventures","devbox"]
+          for private repositories, "ubuntu-latest" for public ones (see the README, "Runners")
         type: string
-        default: '["blacksmith-4vcpu-ubuntu-2404"]'
+        default: ""
       skip-unchanged:
         description: skip when this job already passed with the same tree and inputs
         type: boolean
@@ -72,13 +74,13 @@ on:
 jobs:
   typescript:
     if: github.event.pull_request.draft != true
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runner != '' && inputs.runner || (github.event.repository.visibility == 'public' && '"ubuntu-latest"' || '["self-hosted","traumventures","devbox"]')) }}
     timeout-minutes: 30
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: actions/checkout@v5
         with:
           submodules: ${{ inputs.submodules }}
       - id: green
@@ -100,13 +102,14 @@ jobs:
         if: steps.green.outputs.hit != 'true'
         with:
           bun-version: ${{ steps.bun.outputs.version }}
-          # The install cache is the sticky disk below on Blacksmith.
-          no-cache: ${{ contains(inputs.runner, 'blacksmith') }}
-      - name: Bun install cache (sticky disk)
-        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
+          # setup-bun's own cache holds the Bun binary; on our runners it
+          # stays in the runner's ~/.bun.
+          no-cache: ${{ runner.environment == 'self-hosted' }}
+      - name: Bun install cache
+        if: steps.green.outputs.hit != 'true'
         uses: traumventures/ci/actions/bun-cache@v1
-      - name: Cargo target and registry (sticky disk)
-        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith') && inputs.cargo-workspace != ''
+      - name: Cargo target directory and compile cache
+        if: steps.green.outputs.hit != 'true' && inputs.cargo-workspace != ''
         uses: traumventures/ci/actions/rust-cache@v1
         with:
           key: typescript-${{ inputs.cargo-workspace }}

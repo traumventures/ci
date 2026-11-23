@@ -6,11 +6,12 @@ name: docker
 #   - any other pushed ref publishes :<commit sha>
 # Pull requests call it with push: false (build check only).
 #
-# On Blacksmith the layer cache is Blacksmith's BuildKit builder on a sticky
-# disk (useblacksmith/setup-docker-builder, one cache per repository and
-# image); elsewhere the Actions cache. A build check (push: false) skips draft
-# pull requests and an unchanged tree (actions/green); a publishing build
-# always runs.
+# On our runners the image is built by the runners' Docker daemon itself
+# (the `docker` buildx driver): its build cache persists on the host, nothing
+# is uploaded, and the built image is removed from the daemon afterwards.
+# GitHub-hosted runners (public repositories) use a buildx builder with the
+# Actions cache. A build check (push: false) skips draft pull requests and an
+# unchanged tree (actions/green); a publishing build always runs.
 #
 #   jobs:
 #     docker:
@@ -51,8 +52,11 @@ on:
         type: string
         default: "false"
       runner:
+        description: >
+          runs-on as JSON; default: our runners ["self-hosted","traumventures","devbox"]
+          for private repositories, "ubuntu-latest" for public ones (see the README, "Runners")
         type: string
-        default: '["blacksmith-4vcpu-ubuntu-2404"]'
+        default: ""
       skip-unchanged:
         description: (push false only) skip when this build already passed with the same tree and inputs
         type: boolean
@@ -75,12 +79,12 @@ on:
 jobs:
   docker:
     if: inputs.push || github.event.pull_request.draft != true
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runner != '' && inputs.runner || (github.event.repository.visibility == 'public' && '"ubuntu-latest"' || '["self-hosted","traumventures","devbox"]')) }}
     timeout-minutes: 90
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: actions/checkout@v5
         with:
           submodules: ${{ inputs.submodules }}
       - id: green
@@ -90,14 +94,9 @@ jobs:
           config: ${{ toJSON(inputs) }}
           paths: ${{ inputs.inputs-paths }}
           enabled: ${{ inputs.skip-unchanged && !inputs.push }}
-      - name: Builder (Blacksmith, layer cache on a sticky disk)
-        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
-        uses: useblacksmith/setup-docker-builder@v1
-        with:
-          platforms: ${{ inputs.platforms }}
-          # Bounded; BuildKit keeps the most recently used layers.
-          max-cache-size-mb: "20000"
-      - if: steps.green.outputs.hit != 'true' && !contains(inputs.runner, 'blacksmith')
+      # Our runners: the daemon's default builder (docker driver), whose
+      # cache persists. GitHub-hosted: a buildx builder with the Actions cache.
+      - if: steps.green.outputs.hit != 'true' && runner.environment != 'self-hosted'
         uses: docker/setup-buildx-action@v3
       - name: Log in to the registry
         if: steps.green.outputs.hit != 'true' && inputs.push
@@ -133,9 +132,16 @@ jobs:
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Blacksmith's builder keeps its cache itself; elsewhere the Actions cache.
-          cache-from: ${{ !contains(inputs.runner, 'blacksmith') && format('type=gha,scope={0}', inputs.image) || '' }}
-          cache-to: ${{ !contains(inputs.runner, 'blacksmith') && format('type=gha,mode=max,scope={0}', inputs.image) || '' }}
+          # The daemon's builder keeps its cache itself; GitHub-hosted: the Actions cache.
+          cache-from: ${{ runner.environment != 'self-hosted' && format('type=gha,scope={0}', inputs.image) || '' }}
+          cache-to: ${{ runner.environment != 'self-hosted' && format('type=gha,mode=max,scope={0}', inputs.image) || '' }}
+      # The build loaded the image into the daemon our runners share; its
+      # layers stay in the build cache, the tags would only pile up.
+      - name: Remove the image from the runner's daemon
+        if: always() && runner.environment == 'self-hosted' && steps.meta.outputs.tags != ''
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: printf '%s\n' "$TAGS" | xargs -r docker image rm >/dev/null 2>&1 || true
       - if: steps.green.outputs.hit != 'true'
         uses: traumventures/ci/actions/green@v1
         with:

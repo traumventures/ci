@@ -1,19 +1,30 @@
 name: bun-cache
 description: >
-  Bun's global install cache on a Blacksmith sticky disk, for jobs that run
-  `bun install` themselves (the typescript workflow uses the same disk). A
-  drop-in for an actions/cache step on ~/.bun/install/cache: `bun install`
-  then links from local disk instead of downloading. Use it after
-  oven-sh/setup-bun with `no-cache: true`. Every passing run commits the disk
-  when an install added something (see the README, "Caches").
+  Bun's global install cache kept between jobs, for jobs that run
+  `bun install` themselves (the typescript workflow uses the same cache), so
+  `bun install` links from local disk instead of downloading. Use it after
+  oven-sh/setup-bun.
+
+  On our self-hosted runners the cache is a directory in the runners'
+  persistent cache on the host (BUN_INSTALL_CACHE_DIR): nothing is uploaded
+  or downloaded. On GitHub-hosted runners (public repositories): the Actions
+  cache, keyed on the lockfiles.
 
     - uses: traumventures/ci/actions/bun-cache@v1
 
 runs:
   using: composite
   steps:
-    - uses: useblacksmith/stickydisk@v1
+    - if: runner.environment == 'self-hosted'
+      shell: bash
+      run: |
+        dir="${CI_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/traumventures-ci}/bun-install"
+        mkdir -p "$dir"
+        echo "BUN_INSTALL_CACHE_DIR=$dir" >> "$GITHUB_ENV"
+        echo "bun-cache: $dir"
+    - if: runner.environment != 'self-hosted'
+      uses: actions/cache@v4
       with:
-        key: ${{ github.repository }}-bun-install-cache-v1
         path: ~/.bun/install/cache
-        commit: on-change
+        key: bun-install-${{ runner.os }}-${{ hashFiles('**/bun.lock', '**/bun.lockb') }}
+        restore-keys: bun-install-${{ runner.os }}-

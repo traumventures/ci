@@ -5,10 +5,11 @@ name: rust
 # rust-toolchain.toml when present, else stable.
 #
 # Skips draft pull requests, and every step after checkout when this job
-# already passed with the same tree and inputs (actions/green). On Blacksmith
-# the target directory and cargo's registry live on a sticky disk with
-# incremental compilation and restored source mtimes (actions/rust-cache), so
-# a run rebuilds only crates whose inputs changed. Other runners keep
+# already passed with the same tree and inputs (actions/green). On our
+# runners the target directory persists on the host with incremental
+# compilation and restored source mtimes, over an sccache of the
+# dependencies (actions/rust-cache), so a run rebuilds only crates whose
+# inputs changed. GitHub-hosted runners (public repositories) use
 # Swatinem/rust-cache, saved by main only.
 #
 #   jobs:
@@ -38,8 +39,11 @@ on:
         type: string
         default: "false"
       runner:
+        description: >
+          runs-on as JSON; default: our runners ["self-hosted","traumventures","devbox"]
+          for private repositories, "ubuntu-latest" for public ones (see the README, "Runners")
         type: string
-        default: '["blacksmith-4vcpu-ubuntu-2404"]'
+        default: ""
       skip-unchanged:
         description: skip when this job already passed with the same tree and inputs
         type: boolean
@@ -56,17 +60,15 @@ on:
 jobs:
   rust:
     if: github.event.pull_request.draft != true
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runner != '' && inputs.runner || (github.event.repository.visibility == 'public' && '"ubuntu-latest"' || '["self-hosted","traumventures","devbox"]')) }}
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
-      # Incremental only pays off with a persistent target directory.
-      CARGO_INCREMENTAL: ${{ contains(inputs.runner, 'blacksmith') && '1' || '0' }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: actions/checkout@v5
         with:
           submodules: ${{ inputs.submodules }}
       - id: green
@@ -91,20 +93,15 @@ jobs:
             rustup component add rustfmt clippy
           fi
           rustc --version
-      # Target directory, registry and incremental caches on a sticky disk,
-      # unchanged sources dated back to the build that compiled them
-      # (actions/rust-cache): a run rebuilds only crates whose inputs changed.
-      - name: Target and registry (sticky disk)
-        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
+      # Persistent target directory (one locked lane per job), restored
+      # source mtimes and sccache on our runners; Swatinem/rust-cache on
+      # GitHub-hosted ones.
+      - name: Target directory and compile cache
+        if: steps.green.outputs.hit != 'true'
         uses: traumventures/ci/actions/rust-cache@v1
         with:
           key: ${{ inputs.working-directory }}
           workspace: ${{ inputs.working-directory }}
-      - uses: Swatinem/rust-cache@v2
-        if: steps.green.outputs.hit != 'true' && !contains(inputs.runner, 'blacksmith')
-        with:
-          workspaces: ${{ inputs.working-directory }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Format
         if: steps.green.outputs.hit != 'true' && inputs.fmt != ''
         run: ${{ inputs.fmt }}
@@ -114,6 +111,9 @@ jobs:
       - name: Test
         if: steps.green.outputs.hit != 'true' && inputs.test != ''
         run: ${{ inputs.test }}
+      - name: sccache statistics
+        if: always() && steps.green.outputs.hit != 'true' && env.RUSTC_WRAPPER != ''
+        run: sccache --show-stats || true
       - if: steps.green.outputs.hit != 'true'
         uses: traumventures/ci/actions/green@v1
         with:

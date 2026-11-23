@@ -1,6 +1,6 @@
 // No dependencies: runs from the action checkout as is. See action.yml.
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, lstatSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const input = (name) => process.env[`INPUT_${name.toUpperCase()}`] ?? "";
@@ -44,7 +44,13 @@ export function save(root, manifest) {
   return lines.length;
 }
 
-export function restore(root, manifest) {
+/**
+ * Dates unchanged files back. With `consume`, the manifest is removed once
+ * read: the build directory it sits next to is modified in place from here
+ * on, and only the post step of a passing job may describe it again (a failed
+ * or cancelled build leaves no manifest, the next one rebuilds the workspace).
+ */
+export function restore(root, manifest, { consume = false } = {}) {
   if (!existsSync(manifest)) return null;
   const current = trackedBlobs(root);
   let restored = 0;
@@ -68,6 +74,7 @@ export function restore(root, manifest) {
     utimesSync(full, when, when);
     restored++;
   }
+  if (consume) rmSync(manifest, { force: true });
   return { restored, changed };
 }
 
@@ -80,11 +87,11 @@ function main() {
     return;
   }
   appendFileSync(process.env.GITHUB_STATE, "isPost=true\n");
-  const result = restore(root, manifest);
+  const result = restore(root, manifest, { consume: true });
   console.log(
     result
       ? `source-mtimes: restored ${result.restored} unchanged files, ${result.changed} changed or removed since the recorded build`
-      : `source-mtimes: no manifest at ${manifest}; first build on this disk`,
+      : `source-mtimes: no manifest at ${manifest}; first build in this directory`,
   );
 }
 

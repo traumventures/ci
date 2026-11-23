@@ -1,14 +1,23 @@
 # ci
 
 Reusable GitHub Actions workflows: the one way every traumventures repository
-tests, builds and publishes. They run on **Blacksmith** (`blacksmith-4vcpu-ubuntu-2404`
-by default, a fresh VM per job; pass `runner: '["blacksmith-8vcpu-ubuntu-2404"]'`
-for heavy suites, 2/4/8/16/32 vCPU exist).
+tests, builds and publishes.
 
-Only jobs that hold production credentials or need the dev box stay on our own
-runners ([gh-runners](https://github.com/traumventures/gh-runners)): the
-`deploy-production` workflows (their own deploy runners, devbox BuildKit
-cache) and traumwohnung's preview workflows (`runs-on: [self-hosted, traumventures]`).
+**Runners.** Private repositories run on our own runners on the dev box
+(`["self-hosted","traumventures","devbox"]`: six ephemeral org runners
+`devbox-1..6`, one fresh container per job, under the unprivileged `gh-ci`
+user's rootless Docker). Public repositories run on GitHub-hosted
+`ubuntu-latest` (free for public repositories): our runner group does not
+serve public repositories, because anyone could open a pull request there that
+adds a workflow and runs its code on the dev box. The workflows pick the
+runner from the repository's visibility; `runner:` (runs-on as JSON)
+overrides it. GitHub-hosted runners are blocked by billing for private
+repositories. Jobs a repository writes itself use
+`runs-on: [self-hosted, traumventures, devbox]` (private) or `ubuntu-latest`
+(public).
+
+The `deploy-production` workflows keep their own deploy runners (production
+credentials, devbox BuildKit cache).
 
 | Workflow | Does |
 |---|---|
@@ -28,8 +37,8 @@ cache) and traumwohnung's preview workflows (`runs-on: [self-hosted, traumventur
 
 | `actions/await-ci` | what `gate.yml` runs, for a step inside an existing job |
 | `actions/green` | the "already passed" marker the workflows above use (lookup/save) |
-| `actions/rust-cache` | cargo target, registry and incremental caches on a sticky disk, for jobs that run cargo themselves |
-| `actions/bun-cache` | Bun's install cache on a sticky disk, for jobs that run `bun install` themselves |
+| `actions/rust-cache` | a persistent cargo target directory (incremental, restored mtimes) and sccache, for jobs that run cargo themselves |
+| `actions/bun-cache` | Bun's persistent install cache, for jobs that run `bun install` themselves |
 | `actions/source-mtimes` | dates unchanged sources back to the build that compiled them, so mtime-based tools reuse a kept build directory |
 
 **Skipping what already passed.** `typescript`, `rust`, `go` and `docker`
@@ -43,35 +52,69 @@ so `main`'s run finishes in seconds. `skip-unchanged: false` turns it off,
 The caller grants `actions: read` (listing artifacts); without it nothing is
 skipped.
 
-**Caches.** On Blacksmith, state that only speeds things up lives on sticky
-disks: Bun's install cache, Rust's target directory and registry (with
-incremental builds), Go's module and build caches, Docker layers
-(Blacksmith's BuildKit builder). Every passing run commits its disk when it
-changed, pull requests included. Committing only on `main` left the disks
-empty: `main`'s run is usually skipped (the pull request tested its tree), so
-nothing ever filled them and every pull request built cold (Rust: 5-8 minutes
-of dependencies). The caches are keyed on content (cargo fingerprints, Go
-build IDs, Bun's package store, BuildKit digests), so a snapshot left by
-another branch is only less warm, never wrong; concurrent jobs each work on a
-clone and the last commit wins. A pull request's code can write into a disk
-other runs mount; these are private repositories of one team, the same trust
-the `green` markers already rely on. Other runners fall back to the Actions
-cache, saved by `main` only.
+**Caches.** Our runners keep what only speeds things up on the dev box's own
+disk, in the runners' persistent cache directory (`~/.cache/traumventures-ci`
+in the runner container, the `gh-runner-cache` volume of `gh-ci`'s Docker):
+nothing is uploaded to or downloaded from the Actions cache, which matters on
+the dev box's slow upstream.
+
+- **Rust** (`actions/rust-cache`): each repository and key has two *lanes*,
+  persistent target directories; a job takes a free lane and holds it under a
+  lock until it ends (a third concurrent job waits, after 20 minutes it
+  builds cold), so jobs never share a target directory. `<workspace>/target`
+  is a link to the lane, builds are incremental, and
+  `actions/source-mtimes` dates unchanged sources back to the passing build
+  that produced the lane: only crates whose inputs changed rebuild. The
+  record is consumed when read and written again only by a passing job, so
+  after a failed or cancelled build the next one rebuilds the workspace
+  crates (never stale). A lane is dropped above 40 GB (`max-gb`) or when the
+  disk is 85 % full; lanes unused for 14 days are dropped by the next job.
+  Below the lanes, **sccache** (in the runner image) caches compiled
+  dependencies, so a cold lane, a new key or another repository with the same
+  dependencies does not compile them again. Local sccache storage allows one
+  server per directory, so each runner has its own (20 GB each); the server
+  listens on a socket of the job, as all runners share one network
+  namespace. Incremental workspace crates are compiled, not cached
+  (`SCCACHE_ALLOW_INCREMENTAL=1`). Cargo's registry and git checkouts live in
+  the runners' persistent `~/.cargo`, toolchains in a per-runner
+  `~/.rustup`.
+- **Bun**: the install cache (`BUN_INSTALL_CACHE_DIR`); Bun itself stays in
+  the per-runner `~/.bun`.
+- **Go**: `GOMODCACHE` and `GOCACHE`, shared by all runners (both are safe
+  for concurrent use).
+- **Docker**: images are built by the runners' Docker daemon itself (the
+  default `docker` buildx driver), whose build cache persists (BuildKit GC
+  on the daemon); the built image is removed from the daemon after the job.
+
+The caches are keyed on content (cargo fingerprints and restored mtimes,
+sccache hashes, Go build IDs, Bun's package store, BuildKit digests), so a
+cache left by another branch is only less warm, never wrong. A job's code
+can write into caches other jobs use; these are private repositories of one
+team, the same trust the `green` markers already rely on.
+
+GitHub-hosted runners (public repositories) use the Actions cache instead:
+`Swatinem/rust-cache` (saved by `main` only), `actions/cache` for Bun,
+`setup-go`'s cache, buildx with `type=gha`.
 
 Cargo judges freshness by file mtime, and a checkout dates every file to the
-checkout, so a kept target directory still rebuilt every workspace crate.
-`actions/source-mtimes` records the mtimes after a passing build and dates
-unchanged files back on the next run: only crates whose inputs changed
-rebuild.
+checkout, so a kept target directory still rebuilt every workspace crate;
+that is what `actions/source-mtimes` repairs.
 
-Jobs that run cargo or `bun install` themselves get the same disks from
+Jobs that run cargo or `bun install` themselves get the same caches from
 `actions/rust-cache` (a drop-in for `Swatinem/rust-cache`: `target/` becomes a
-link to the disk) and `actions/bun-cache` (instead of an `actions/cache` step
+link to the lane) and `actions/bun-cache` (instead of an `actions/cache` step
 on `~/.bun/install/cache`).
 
-**Runner environment.** Blacksmith VMs behave like GitHub's hosted Ubuntu:
-Docker, `services:`, `sudo`, published ports on localhost; nothing is shared
-between jobs.
+**Runner environment.** The runner container is Ubuntu 24.04 with the
+usual build tools, git, jq, Python 3, the Docker CLI with buildx and compose,
+`psql` and sccache; anything else comes from `setup-*` actions or
+`sudo apt-get` (the job runs as root of the container, which is the
+unprivileged `gh-ci` user on the host). `docker` talks to `gh-ci`'s rootless
+daemon, shared by all six runners; their jobs also share one network
+namespace, so two jobs must not publish the same fixed port: use
+`actions/postgres` (it picks a free port) rather than `services:` with a fixed
+`ports:` mapping. Containers a job starts with the label
+`gh-runner-job=$RUNNER_NAME` are removed after it.
 
 Every input has a default; a step can be replaced by a command or skipped
 with `""`.
