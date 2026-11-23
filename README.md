@@ -28,7 +28,7 @@ credentials, devbox BuildKit cache).
 
 | `gate.yml` | the first job of a deploy or release: the commit is on `main` (and with the default `await-ci: true` its `ci` passed; waits for a run in progress). CI runs only on demand and inside deploys and releases, so those pass `await-ci: false` and call their own `ci.yml` |
 
-| `actions/postgres` (composite action) | a throwaway Postgres on `127.0.0.1`, preferred port or the next free one (`url`/`port` outputs); jobs share one network namespace |
+| `actions/postgres` (composite action) | a throwaway Postgres on the job's `127.0.0.1`, preferred port or the next free one (`url`/`port` outputs) |
 
 ```yaml
 - uses: traumventures/ci/actions/postgres@v1
@@ -110,12 +110,17 @@ on `~/.bun/install/cache`).
 usual build tools, git, jq, Python 3, the Docker CLI with buildx and compose,
 `psql` and sccache; anything else comes from `setup-*` actions or
 `sudo apt-get` (the job runs as root of the container, which is the
-unprivileged `gh-ci` user on the host). `docker` talks to `gh-ci`'s rootless
-daemon, shared by all six runners; their jobs also share one network
-namespace, so two jobs must not publish the same fixed port: use
-`actions/postgres` (it picks a free port) rather than `services:` with a fixed
-`ports:` mapping. Containers a job starts with the label
-`gh-runner-job=$RUNNER_NAME` are removed after it.
+unprivileged `gh-ci` user on the host). Each job has the runner container's
+own network namespace: 127.0.0.1 is the job's, the internet is reachable, the
+dev box's LAN, Tailscale and host services are not (the host's
+`traumbox_isolation` rules apply to all of `gh-ci`'s traffic). `docker` talks
+to `gh-ci`'s rootless daemon, shared by all six runners. Containers a job
+needs on its 127.0.0.1 join that namespace: `actions/postgres` does
+(`--network container:$HOSTNAME`). `services:` with `ports:` do not work on
+our runners (the ports are published on the host, which a job cannot reach);
+use `actions/postgres` or `docker run --network container:$HOSTNAME`.
+Containers a job starts with the label `gh-runner-job=$RUNNER_NAME` are
+removed after it.
 
 Every input has a default; a step can be replaced by a command or skipped
 with `""`.
