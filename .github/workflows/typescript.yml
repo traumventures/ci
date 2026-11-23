@@ -108,6 +108,18 @@ jobs:
       - name: Bun install cache
         if: steps.green.outputs.hit != 'true'
         uses: traumventures/ci/actions/bun-cache@v1
+      # GitHub's hosted image has rustup with stable; our runner image does
+      # not, the workspace's rust-toolchain.toml (if any) decides.
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.green.outputs.hit != 'true' && inputs.cargo-workspace != ''
+      - name: Toolchain of the Cargo workspace
+        if: steps.green.outputs.hit != 'true' && inputs.cargo-workspace != ''
+        working-directory: ${{ inputs.cargo-workspace }}
+        run: |
+          if [ -f rust-toolchain.toml ] || [ -f rust-toolchain ]; then
+            rustup show active-toolchain || rustup toolchain install
+          fi
+          rustc --version
       - name: Cargo target directory and compile cache
         if: steps.green.outputs.hit != 'true' && inputs.cargo-workspace != ''
         uses: traumventures/ci/actions/rust-cache@v1
