@@ -1,25 +1,32 @@
 name: rust-cache
 description: >
-  Cargo's target directory, registry and git checkouts on a Blacksmith sticky
-  disk, with incremental builds, for jobs that run cargo themselves (the rust
-  workflow uses the same setup). A drop-in for Swatinem/rust-cache on
-  Blacksmith runners: <workspace>/<target> becomes a link to the disk, so
-  paths like target/debug/<bin> or target/llvm-cov-target keep working.
+  Cargo's target directory kept between jobs, with incremental builds, for
+  jobs that run cargo themselves (the rust and typescript workflows use the
+  same setup). A drop-in for Swatinem/rust-cache: <workspace>/<target> stays
+  where cargo expects it, so paths like target/debug/<bin> or
+  target/llvm-cov-target keep working.
 
-  The disk keeps the whole build, workspace crates included, and
-  source-mtimes dates unchanged sources back to the build that compiled them,
-  so a run rebuilds only crates whose inputs changed. Every passing run
-  commits the disk when it changed (see the README, "Caches").
+  On our self-hosted runners the target directory lives in the runners'
+  persistent cache directory on the host (a link, see the README, "Caches"):
+  nothing is uploaded or downloaded. Each repository and key has a few lanes;
+  a job holds one lane exclusively until it ends, so concurrent jobs never
+  share a target directory. source-mtimes dates unchanged sources back to the
+  passing build that produced the lane, so a run rebuilds only crates whose
+  inputs changed. Cargo's registry and git checkouts are the runner's own
+  persistent ~/.cargo.
+
+  On GitHub-hosted runners (public repositories): Swatinem/rust-cache, saved
+  by main only.
 
     - uses: traumventures/ci/actions/rust-cache@v1
       with:
-        key: quality            # one disk per distinct build (profile, features, tool)
+        key: quality            # one cache per distinct build (profile, features, tool)
         workspace: .            # the Cargo workspace
         target: target          # its target directory, relative to the workspace
 
 inputs:
   key:
-    description: names the disk within the repository; jobs building differently need different keys
+    description: names the cache within the repository; jobs building differently need different keys
     required: true
   workspace:
     description: the Cargo workspace directory, relative to the repository root
@@ -30,49 +37,49 @@ inputs:
   incremental:
     description: >
       "true" keeps rustc's incremental caches (fast rebuilds of changed
-      workspace crates, roughly doubles the disk); "false" for builds that
+      workspace crates, roughly doubles the size); "false" for builds that
       rarely rebuild the same crates incrementally (coverage, mutation testing)
     default: "true"
   max-gb:
-    description: the target directory is dropped (one cold build) once the disk holds more; disks are billed per GB
+    description: (self-hosted) a lane's target directory is dropped (one cold build) once it holds more
     default: "40"
+  lanes:
+    description: (self-hosted) target directories per repository and key, i.e. how many jobs with this key run at once without waiting
+    default: "2"
+  sccache:
+    description: (self-hosted) "true" compiles through sccache when the runner has it (see the README, "Caches")
+    default: "true"
+
+outputs:
+  dir:
+    description: (self-hosted) the lane directory; empty on GitHub-hosted runners
+    value: ${{ steps.lane.outputs.dir }}
 
 runs:
   using: composite
   steps:
-    - uses: useblacksmith/stickydisk@v1
-      with:
-        key: ${{ github.repository }}-rust-${{ inputs.key }}-v1
-        path: /home/runner/.ci-rust-${{ inputs.key }}
-        commit: on-change
-    - name: Target, registry and git checkouts on the disk
+    - id: lane
+      name: Target directory (persistent lane)
+      if: runner.environment == 'self-hosted'
       shell: bash
       env:
-        STICKY: /home/runner/.ci-rust-${{ inputs.key }}
+        KEY: ${{ inputs.key }}
         TARGET: ${{ inputs.workspace }}/${{ inputs.target }}
-      run: |
-        set -euo pipefail
-        sudo chown "$(id -u):$(id -g)" "$STICKY"
-        mkdir -p "$STICKY/target" "$STICKY/registry" "$STICKY/git"
-        cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-        mkdir -p "$cargo_home"
-        for dir in registry git; do rm -rf "${cargo_home:?}/$dir"; ln -s "$STICKY/$dir" "$cargo_home/$dir"; done
-        rm -rf "$TARGET"
-        mkdir -p "$(dirname "$TARGET")"
-        ln -s "$STICKY/target" "$TARGET"
-        # A link is not a directory, so `target/` in .gitignore does not hide
-        # it: exclude it, or "is the checkout clean?" checks (git status
-        # --porcelain) see an untracked file.
-        if root="$(git -C "$(dirname "$TARGET")" rev-parse --show-toplevel 2>/dev/null)"; then
-          exclude="$(git -C "$root" rev-parse --absolute-git-dir)/info/exclude"
-          mkdir -p "$(dirname "$exclude")"
-          echo "/$(realpath -s --relative-to="$root" "$TARGET")" >> "$exclude"
-        fi
-        echo "CARGO_INCREMENTAL=${{ inputs.incremental == 'true' && '1' || '0' }}" >> "$GITHUB_ENV"
-        "${{ github.action_path }}/../rust-sticky-hygiene.sh" "$STICKY" "${{ inputs.max-gb }}"
-    - uses: traumventures/ci/actions/source-mtimes@v1
+        INCREMENTAL: ${{ inputs.incremental }}
+        MAX_GB: ${{ inputs.max-gb }}
+        LANES: ${{ inputs.lanes }}
+        SCCACHE: ${{ inputs.sccache }}
+      run: '"$GITHUB_ACTION_PATH/lane.sh"'
+    - if: runner.environment == 'self-hosted' && steps.lane.outputs.persistent == 'true'
+      uses: traumventures/ci/actions/source-mtimes@v1
       with:
-        manifest: /home/runner/.ci-rust-${{ inputs.key }}/source-mtimes
+        manifest: ${{ steps.lane.outputs.dir }}/source-mtimes
         # The files git tracks at the workspace: a nested checkout of another
         # repository (open-traummail/) has its own index.
         repository: ${{ inputs.workspace }}
+    - if: runner.environment != 'self-hosted'
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: ${{ inputs.workspace }} -> ${{ inputs.target }}
+        key: ${{ inputs.key }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}

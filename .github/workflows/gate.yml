@@ -41,13 +41,16 @@ on:
         type: boolean
         default: true
       runner:
+        description: >
+          runs-on as JSON; default: our runners ["self-hosted","traumventures","devbox"]
+          for private repositories, "ubuntu-latest" for public ones (see the README, "Runners")
         type: string
-        default: '["blacksmith-2vcpu-ubuntu-2404"]'
+        default: ""
 
 jobs:
   gate:
     name: on ${{ inputs.branch }}${{ inputs.await-ci && format(', {0} green', inputs.workflow) || '' }}
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runner != '' && inputs.runner || (github.event.repository.visibility == 'public' && '"ubuntu-latest"' || '["self-hosted","traumventures","devbox"]')) }}
     timeout-minutes: ${{ inputs.await-ci && 40 || 5 }}
     steps:
       - uses: traumventures/ci/actions/await-ci@v1

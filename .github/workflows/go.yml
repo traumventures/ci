@@ -3,8 +3,9 @@ name: go
 # Go checks of one module: gofmt, go vet, tests (with the race detector).
 #
 # Skips draft pull requests, and every step after checkout when this job
-# already passed with the same tree and inputs (actions/green). On Blacksmith
-# the module and build caches live on a sticky disk that only main commits.
+# already passed with the same tree and inputs (actions/green). On our
+# runners the module and build caches persist on the host; GitHub-hosted
+# runners (public repositories) use setup-go's Actions cache.
 #
 #   jobs:
 #     go:
@@ -23,8 +24,11 @@ on:
         type: string
         default: "false"
       runner:
+        description: >
+          runs-on as JSON; default: our runners ["self-hosted","traumventures","devbox"]
+          for private repositories, "ubuntu-latest" for public ones (see the README, "Runners")
         type: string
-        default: '["blacksmith-4vcpu-ubuntu-2404"]'
+        default: ""
       skip-unchanged:
         description: skip when this job already passed with the same tree and inputs
         type: boolean
@@ -41,13 +45,13 @@ on:
 jobs:
   go:
     if: github.event.pull_request.draft != true
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runner != '' && inputs.runner || (github.event.repository.visibility == 'public' && '"ubuntu-latest"' || '["self-hosted","traumventures","devbox"]')) }}
     timeout-minutes: 30
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: actions/checkout@v5
         with:
           submodules: ${{ inputs.submodules }}
       - id: green
@@ -62,22 +66,16 @@ jobs:
         with:
           go-version-file: ${{ inputs.working-directory }}/go.mod
           cache-dependency-path: ${{ inputs.working-directory }}/go.sum
-          # The caches are the sticky disk below on Blacksmith.
-          cache: ${{ !contains(inputs.runner, 'blacksmith') }}
-      - name: Go caches (sticky disk)
-        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: ${{ github.repository }}-go-${{ inputs.working-directory }}-v1
-          path: /home/runner/.ci-go
-          commit: on-change
-      - name: Use the sticky disk
-        if: steps.green.outputs.hit != 'true' && contains(inputs.runner, 'blacksmith')
+          # Our runners keep the caches on the host (next step).
+          cache: ${{ runner.environment != 'self-hosted' }}
+      - name: Go caches (persistent)
+        if: steps.green.outputs.hit != 'true' && runner.environment == 'self-hosted'
         run: |
-          sudo chown "$(id -u):$(id -g)" /home/runner/.ci-go
-          mkdir -p /home/runner/.ci-go/mod /home/runner/.ci-go/build
-          echo "GOMODCACHE=/home/runner/.ci-go/mod" >> "$GITHUB_ENV"
-          echo "GOCACHE=/home/runner/.ci-go/build" >> "$GITHUB_ENV"
+          # Go's module and build caches are safe for concurrent jobs.
+          dir="${CI_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/traumventures-ci}/go"
+          mkdir -p "$dir/mod" "$dir/build"
+          echo "GOMODCACHE=$dir/mod" >> "$GITHUB_ENV"
+          echo "GOCACHE=$dir/build" >> "$GITHUB_ENV"
       - name: gofmt
         if: steps.green.outputs.hit != 'true'
         run: |

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { restore, save } from "../actions/source-mtimes/index.mjs";
@@ -63,7 +63,17 @@ describe("source-mtimes", () => {
     expect(mtime(join(dir, "a.rs"))).toBe(before);
   });
 
-  test("no manifest: first build on the disk", () => {
+  test("consume: the manifest is gone once read", () => {
+    const { dir } = repo();
+    const manifest = join(dir, ".git", "manifest");
+    save(dir, manifest);
+    checkout(dir);
+    expect(restore(dir, manifest, { consume: true })).toEqual({ restored: 2, changed: 0 });
+    expect(existsSync(manifest)).toBe(false);
+    expect(restore(dir, manifest)).toBeNull();
+  });
+
+  test("no manifest: first build in the directory", () => {
     const { dir } = repo();
     expect(restore(dir, join(dir, "missing"))).toBeNull();
   });
