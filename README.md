@@ -74,8 +74,9 @@ the dev box's slow upstream.
   dependencies does not compile them again. Local sccache storage allows one
   server per directory, so each runner has its own (20 GB each); the server
   listens on a socket of the job, as all runners share one network
-  namespace. Incremental workspace crates are compiled, not cached
-  (`SCCACHE_ALLOW_INCREMENTAL=1`). Cargo's registry and git checkouts live in
+  namespace. Workspace crates, built incrementally (cargo's profile
+  default; `CARGO_INCREMENTAL` stays unset, sccache refuses `=1`), are
+  compiled, not cached. Cargo's registry and git checkouts live in
   the runners' persistent `~/.cargo`, toolchains in a per-runner
   `~/.rustup`.
 - **Bun**: the install cache (`BUN_INSTALL_CACHE_DIR`); Bun itself stays in
