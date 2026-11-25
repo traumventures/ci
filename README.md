@@ -4,8 +4,8 @@ Reusable GitHub Actions workflows: the one way every traumventures repository
 tests, builds and publishes.
 
 **Runners.** Private repositories run on our own runners on the dev box
-(`["self-hosted","traumventures","devbox"]`: six ephemeral org runners
-`devbox-1..6`, one fresh container per job, under the unprivileged `gh-ci`
+(`["self-hosted","traumventures","devbox"]`: one ephemeral org runner
+`devbox-1`, one fresh container per job, under the unprivileged `gh-ci`
 user's rootless Docker). Public repositories run on GitHub-hosted
 `ubuntu-latest` (free for public repositories): our runner group does not
 serve public repositories, because anyone could open a pull request there that
@@ -119,13 +119,19 @@ unprivileged `gh-ci` user on the host). Each job has the runner container's
 own network namespace: 127.0.0.1 is the job's, the internet is reachable, the
 dev box's LAN, Tailscale and host services are not (the host's
 `traumbox_isolation` rules apply to all of `gh-ci`'s traffic). `docker` talks
-to `gh-ci`'s rootless daemon, shared by all six runners. Containers a job
+to `gh-ci`'s rootless daemon. Containers a job
 needs on its 127.0.0.1 join that namespace: `actions/postgres` does
 (`--network container:$HOSTNAME`). `services:` with `ports:` do not work on
 our runners (the ports are published on the host, which a job cannot reach);
 use `actions/postgres` or `docker run --network container:$HOSTNAME`.
 Containers a job starts with the label `gh-runner-job=$RUNNER_NAME` are
 removed after it.
+
+Container jobs (`container:`) work: the job container runs on the same
+daemon beside the runner, without the runner's memory cap (set
+`options: --memory 14g --memory-swap 14g`); `volumes:` with a named volume
+keep a directory between jobs (a target directory, as Blacksmith's sticky
+disks did).
 
 Every input has a default; a step can be replaced by a command or skipped
 with `""`.
