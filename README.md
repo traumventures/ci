@@ -121,9 +121,10 @@ dev box's LAN, Tailscale and host services are not (the host's
 `traumbox_isolation` rules apply to all of `gh-ci`'s traffic). `docker` talks
 to `gh-ci`'s rootless daemon. Containers a job
 needs on its 127.0.0.1 join that namespace: `actions/postgres` does
-(`--network container:$HOSTNAME`). `services:` with `ports:` do not work on
-our runners (the ports are published on the host, which a job cannot reach);
-use `actions/postgres` or `docker run --network container:$HOSTNAME`.
+(`--network container:$HOSTNAME`). Published ports work as on a hosted runner: `services:` with `ports:`,
+`docker run -p 127.0.0.1::3000`, compose `ports:` answer on the job's
+127.0.0.1 (gh-runners `port-mirror` forwards them to the container, also on
+compose networks). Joining the namespace avoids the forwarding hop.
 Containers a job starts with the label `gh-runner-job=$RUNNER_NAME` are
 removed after it.
 
